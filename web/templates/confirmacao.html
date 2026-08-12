@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block titulo %}Confirmação de agenda — {{ titulo_site }}{% endblock %}
+
+{% block corpo %}
+<main>
+  <div class="titulo-pagina">
+    <h1>Confirmação de agenda</h1>
+    <span class="sub">agenda do dia cruzada com o formulário de confirmação</span>
+    <span class="titulo-acoes" style="flex-wrap:wrap">
+      <a class="botao {{ 'secundario' if dia != 'd0' }}" href="/confirmacao?dia=d0">Hoje (D0)</a>
+      <a class="botao {{ 'secundario' if dia != 'd1' }}" href="/confirmacao?dia=d1">Amanhã (D+1)</a>
+      <button class="botao secundario" type="button" id="enviar-grupo">
+        Enviar não confirmados no grupo
+      </button>
+    </span>
+  </div>
+
+  {% if enviado %}<div class="aviso ok">{{ enviado }}</div>{% endif %}
+  {% if falhou %}<div class="aviso erro">{{ falhou }}</div>{% endif %}
+  <div class="aviso" id="resposta-envio" style="display:none"></div>
+
+  {% with volta = "/confirmacao" %}{% include "_fontes.html" %}{% endwith %}
+
+  <div id="conteudo">
+    <div class="aviso alerta">Lendo a agenda e o formulário de confirmação…</div>
+  </div>
+</main>
+
+<script>
+(function () {
+  var alvo = document.getElementById("conteudo");
+  fetch("/confirmacao/dados?dia={{ dia }}")
+    .then(function (r) { return r.text(); })
+    .then(function (html) { alvo.innerHTML = html; })
+    .catch(function () {
+      alvo.innerHTML = '<div class="aviso erro">Não consegui carregar. Recarregue a página.</div>';
+    });
+
+  var botaoEnviar = document.getElementById("enviar-grupo");
+  var resposta = document.getElementById("resposta-envio");
+  botaoEnviar.addEventListener("click", function () {
+    var rotulo = "{{ 'Hoje (D0)' if dia == 'd0' else 'Amanhã (D+1)' }}";
+    if (!confirm("Enviar a lista de não confirmados de " + rotulo + " para o grupo?")) return;
+
+    botaoEnviar.disabled = true;
+    botaoEnviar.textContent = "Enviando…";
+    resposta.style.display = "none";
+
+    var dados = new FormData();
+    dados.append("dia", "{{ dia }}");
+    fetch("/confirmacao/enviar", { method: "POST", body: dados })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        resposta.className = "aviso " + (d.ok ? "ok" : "erro");
+        resposta.textContent = d.ok ? (d.mensagem || "Enviado.") : (d.erro || "Falha ao enviar.");
+        resposta.style.display = "block";
+      })
+      .catch(function () {
+        resposta.className = "aviso erro";
+        resposta.textContent = "Não consegui enviar o pedido. Tente de novo.";
+        resposta.style.display = "block";
+      })
+      .finally(function () {
+        botaoEnviar.disabled = false;
+        botaoEnviar.textContent = "Enviar não confirmados no grupo";
+      });
+  });
+})();
+</script>
+{% endblock %}

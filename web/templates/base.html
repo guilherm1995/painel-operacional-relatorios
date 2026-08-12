@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block titulo %}{{ titulo_site }}{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.png?v={{ versao_estatica }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/estilo.css?v={{ versao_estatica }}">
+</head>
+<body>
+
+{% if logado %}
+<header class="topo">
+  <div class="credito-embutido">{{ credito_nome }}</div>
+  <div class="topo-linha">
+    <div class="marca">
+      <img src="/static/logo.png" alt="OPERACIONAL TELECOM">
+      <span>{{ titulo_site }}</span>
+    </div>
+    <button class="menu-alternar" id="menu-alternar" type="button" aria-label="Abrir menu" aria-expanded="false" aria-controls="menu">
+      <span></span><span></span><span></span>
+    </button>
+    <nav class="menu" id="menu">
+      <a href="/" class="{{ 'ativo' if pagina == 'inicio' }}">Início</a>
+      <a href="/painel" class="{{ 'ativo' if pagina == 'painel' }}">Painel</a>
+      <a href="/backlog" class="{{ 'ativo' if pagina == 'backlog' }}">Backlog</a>
+      <a href="/confirmacao" class="{{ 'ativo' if pagina == 'confirmacao' }}">Confirmação</a>
+      <a href="/garantias" class="{{ 'ativo' if pagina == 'garantias' }}">Garantias</a>
+      <a href="/sair" class="sair">Sair</a>
+    </nav>
+  </div>
+</header>
+{% else %}
+<div class="credito-topo">{{ credito_nome }}</div>
+{% endif %}
+
+{% block corpo %}{% endblock %}
+
+<footer class="rodape">{{ credito_ano }}</footer>
+
+<div class="lupa" id="lupa"><img src="" alt=""></div>
+<script src="/static/app.js?v={{ versao_estatica }}"></script>
+</body>
+</html>

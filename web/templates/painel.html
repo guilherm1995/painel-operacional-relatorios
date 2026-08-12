@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block titulo %}Painel — {{ titulo_site }}{% endblock %}
+
+{% block corpo %}
+<main>
+  <div class="titulo-pagina">
+    <h1>Painel de acompanhamento</h1>
+    <span class="sub">
+      {% if ultima %}última extração enviada: {{ ultima.quando }}{% else %}nenhuma extração enviada ainda{% endif %}
+    </span>
+  </div>
+
+  <section>
+    <h2>Gerar as telas do dia</h2>
+    <form class="solta" id="solta" method="post" action="/painel/gerar" enctype="multipart/form-data">
+      <div class="icone">📄</div>
+      <p>
+        Arraste aqui a extração do dia, ou clique para escolher.<br>
+        Aceita <strong>.xlsx</strong> e <strong>.csv</strong> — só as colunas do export de campo.
+      </p>
+      <input type="file" name="extracao" id="arquivo" accept=".xlsx,.xlsm,.csv,.txt" required>
+      <button class="botao" type="button" id="escolher">Escolher arquivo</button>
+      <div id="nome-arquivo" style="margin-top:14px;font-size:13.5px;color:var(--ciano)"></div>
+      <div id="acao" style="margin-top:16px;display:none">
+        <button class="botao" type="submit" id="enviar">Gerar as 4 telas</button>
+      </div>
+    </form>
+  </section>
+
+  {% if erro %}<div class="aviso erro">{{ erro }}</div>{% endif %}
+  {% if resultado %}
+    <div class="aviso ok">
+      Telas geradas de {{ resultado.atividades }} atividades · carimbo {{ resultado.carimbo }}.
+    </div>
+  {% endif %}
+
+  <section>
+    <h2>Configurações</h2>
+    {% if config_salva %}<div class="aviso ok">{{ config_salva }}</div>{% endif %}
+    {% if config_erro %}<div class="aviso erro">{{ config_erro }}</div>{% endif %}
+
+    <form class="config-painel" method="post" action="/painel/configuracao">
+      <div class="config-bloco">
+        <div class="config-rotulo">Dia da semana (meta da Carga de Serviços)</div>
+        <div class="pills">
+          {% for codigo, rotulo in config.dias_opcoes.items() %}
+          <label class="pill {{ 'marcada' if config.tipo_dia == codigo }}">
+            <input type="radio" name="tipo_dia" value="{{ codigo }}" {{ 'checked' if config.tipo_dia == codigo }}>
+            {{ rotulo }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      {% set inativos = config.clusters | rejectattr('ativo') | list %}
+      <div class="config-bloco">
+        <div class="config-rotulo">Clusters ativos e quantidade de técnicos</div>
+        <div class="config-nota">
+          Desmarcar um cluster tira suas atividades de todas as telas — use para uma
+          unidade que a operação não atende mais. Deixe a quantidade em branco para
+          calcular pela extração.
+        </div>
+        <div class="config-clusters">
+          {% for c in config.clusters if c.ativo %}
+          <div class="config-cluster">
+            <label class="checkbox">
+              <input type="checkbox" name="cluster_ativo" value="{{ c.codigo }}"
+                     data-controla-carga="{{ c.codigo }}" checked>
+              {{ c.codigo }}
+            </label>
+            <input type="text" name="mo_{{ c.codigo }}" value="{{ c.mo_ativa }}"
+                   placeholder="auto" inputmode="numeric" class="campo-mo">
+          </div>
+          {% endfor %}
+          <div class="config-cluster">
+            <label class="checkbox" style="visibility:hidden">
+              <input type="checkbox" disabled> OPERACIONAL
+            </label>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:13px;color:var(--texto-fraco);min-width:52px">OPERACIONAL</span>
+              <input type="text" name="mo_OPERACIONAL" value="{{ config.mo_ativa_operacional }}"
+                     placeholder="soma" inputmode="numeric" class="campo-mo">
+            </div>
+          </div>
+        </div>
+
+        {% if inativos %}
+        <div id="bloco-inativos" class="revelavel">
+          <div class="config-clusters">
+            {% for c in inativos %}
+            <div class="config-cluster">
+              <label class="checkbox">
+                <input type="checkbox" name="cluster_ativo" value="{{ c.codigo }}"
+                       data-controla-carga="{{ c.codigo }}">
+                {{ c.codigo }}
+              </label>
+              <input type="text" name="mo_{{ c.codigo }}" value="{{ c.mo_ativa }}"
+                     placeholder="auto" inputmode="numeric" class="campo-mo">
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <button type="button" class="botao secundario" id="alternar-inativos"
+                style="margin-top:12px; padding:7px 14px; font-size:12.5px">
+          Mostrar {{ inativos|length }} unidade{{ 's' if inativos|length != 1 }} desativada{{ 's' if inativos|length != 1 }}
+        </button>
+        {% endif %}
+      </div>
+
+      <div class="config-bloco">
+        <div class="config-rotulo">Clusters na Carga de Serviços</div>
+        <div class="config-nota">
+          Quais clusters ganham coluna própria na tela Carga de Serviços. Diferente do
+          bloco acima: um cluster desmarcado aqui continua contando nas outras 3 telas.
+          Só aparecem os clusters ativos no bloco de cima.
+        </div>
+        <div class="pills" id="pills-carga">
+          {% for c in config.clusters %}
+          <label class="pill {{ 'marcada' if c.na_carga }}" data-pill-carga="{{ c.codigo }}"
+                 style="{{ '' if c.ativo else 'display:none' }}">
+            <input type="checkbox" name="carga_cluster" value="{{ c.codigo }}" {{ 'checked' if c.na_carga }}>
+            {{ c.codigo }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button class="botao" type="submit">Salvar configuração</button>
+    </form>
+  </section>
+
+  <script>
+  (function () {
+    // unidades desativadas ficam escondidas por padrao - o botao so revela
+    // quando alguem realmente precisa reativar uma
+    var botaoInativos = document.getElementById("alternar-inativos");
+    var blocoInativos = document.getElementById("bloco-inativos");
+    if (botaoInativos && blocoInativos) {
+      var textoBase = botaoInativos.textContent.trim();
+      botaoInativos.addEventListener("click", function () {
+        var aberto = blocoInativos.classList.toggle("aberto");
+        botaoInativos.textContent = aberto ? "Ocultar unidades desativadas" : textoBase;
+      });
+    }
+
+    // desmarcar um cluster no bloco "Clusters ativos" some com ele aqui embaixo
+    // na hora, sem precisar salvar e recarregar para perceber a inconsistencia
+    document.querySelectorAll("[data-controla-carga]").forEach(function (caixa) {
+      caixa.addEventListener("change", function () {
+        var pill = document.querySelector(
+          '[data-pill-carga="' + caixa.dataset.controlaCarga + '"]'
+        );
+        if (!pill) return;
+        if (caixa.checked) {
+          pill.style.display = "";
+        } else {
+          pill.style.display = "none";
+          pill.classList.remove("marcada");
+          pill.querySelector("input").checked = false;
+        }
+      });
+    });
+  })();
+  </script>
+
+  <section>
+    <h2>Telas geradas</h2>
+    <div class="painel-grade">
+      {% for tela in telas %}
+      <div class="painel-carta">
+        <header>
+          <h3>{{ tela.titulo }}</h3>
+          <span class="quando">{{ tela.quando if tela.existe else 'não gerado' }}</span>
+        </header>
+        {% if tela.existe %}
+          <div class="moldura">
+            <img src="/painel/imagem/{{ tela.nome }}?v={{ tela.minutos }}" alt="{{ tela.titulo }}" loading="lazy">
+          </div>
+          <header style="border-top:1px solid var(--borda);border-bottom:none">
+            <a class="botao secundario" href="/painel/imagem/{{ tela.nome }}?baixar=1" download>Baixar PNG</a>
+          </header>
+        {% else %}
+          <div class="vazio">Ainda não gerada.</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+</main>
+{% endblock %}

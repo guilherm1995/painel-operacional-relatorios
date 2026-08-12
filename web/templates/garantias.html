@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block titulo %}Garantias — {{ titulo_site }}{% endblock %}
+
+{% block corpo %}
+<main>
+  <div class="titulo-pagina">
+    <h1>Lista de garantias</h1>
+    <span class="sub">reparo aberto em até 30 dias de um reparo, ou 15 de ativação/mudança</span>
+  </div>
+
+  {% if enviado %}<div class="aviso ok">{{ enviado }}</div>{% endif %}
+  {% if falhou %}<div class="aviso erro">{{ falhou }}</div>{% endif %}
+
+  {% with volta = "/garantias" %}{% include "_fontes.html" %}{% endwith %}
+
+  <div id="conteudo">
+    <div class="aviso alerta" id="carregando">
+      Consultando as planilhas{% if autenticador_ativo %} e o status online no Autenticador{% endif %}…
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  var alvo = document.getElementById("conteudo");
+  fetch("/garantias/dados")
+    .then(function (r) { return r.text(); })
+    .then(function (html) { alvo.innerHTML = html; })
+    .catch(function () {
+      alvo.innerHTML = '<div class="aviso erro">Não consegui carregar a lista. Recarregue a página.</div>';
+    });
+})();
+</script>
+{% endblock %}

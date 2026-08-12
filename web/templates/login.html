@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block titulo %}Acesso — {{ titulo_site }}{% endblock %}
+
+{% block corpo %}
+<div class="login-tela">
+  <form class="login-caixa" method="post" action="/entrar">
+    <img src="/static/logo.png" alt="OPERACIONAL TELECOM">
+    <h1>{{ titulo_site }}</h1>
+    <p>Informe o PIN de acesso para continuar.</p>
+
+    {% if erro %}
+      <div class="aviso erro">{{ erro }}</div>
+    {% endif %}
+
+    <input type="password" name="pin" inputmode="numeric" autocomplete="current-password"
+           placeholder="••••••" autofocus required>
+    <input type="hidden" name="destino" value="{{ destino }}">
+    <button class="botao" type="submit">Entrar</button>
+  </form>
+</div>
+{% endblock %}

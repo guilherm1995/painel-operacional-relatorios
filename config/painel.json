@@ -1,0 +1,30 @@
+{
+  "_comentario": "Parâmetros de negócio ajustáveis pelo gestor. Valores de exemplo.",
+  "somente_servicos": true,
+  "clusters_excluidos": [
+    "CL_FORA_DE_OPERACAO"
+  ],
+  "servicos_excluidos": [
+    "ALMOÇO",
+    "CHECKLIST VEICULAR"
+  ],
+  "meta_produtividade": 3.7,
+  "meta_financeira_dia": {
+    "CL1": 10000.0,
+    "CL2": 8000.0
+  },
+  "mo_ativa_manual": {},
+  "tipo_dia": "auto",
+  "limite_linhas_prazo": 18,
+  "limite_linhas_tempo": 18,
+  "prazo_somente_em_aberto": false,
+  "alerta_tempo_execucao_min": 120,
+  "carga_clusters": [
+    "CL1",
+    "CL2",
+    "CL3"
+  ],
+  "carga_ocultar_sem_atividade": true,
+  "carga_agenda_zerada": [],
+  "fator_alta": 0.4
+}

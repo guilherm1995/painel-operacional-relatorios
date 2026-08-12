@@ -1,0 +1,198 @@
+{% macro barra(rotulo, valor, total, cor) %}
+<div class="barra-linha">
+  <span class="nome">{{ rotulo }}</span>
+  <span class="trilho">
+    <span class="preenchimento" style="width: {{ (valor / total * 100) if total else 0 }}%; background: {{ cor }}"></span>
+  </span>
+  <span class="num">{{ valor }}/{{ total }}</span>
+</div>
+{% endmacro %}
+
+{% macro barra_pct(rotulo, valor, pct, cor) %}
+<div class="barra-linha">
+  <span class="nome">{{ rotulo }}</span>
+  <span class="trilho">
+    <span class="preenchimento" style="width: {{ pct * 100 }}%; background: {{ cor }}"></span>
+  </span>
+  <span class="num">{{ valor }}</span>
+</div>
+{% endmacro %}
+
+{% if dados.erro %}
+  <div class="aviso erro">{{ dados.erro }}</div>
+{% elif dados.sem_agenda %}
+  <div class="aviso alerta">
+    Não há agenda registrada para {{ dados.rotulo_dia }} ({{ dados.data_alvo }}) no OFS GERAL.
+  </div>
+{% else %}
+
+  {% for aviso in dados.avisos %}
+    <div class="aviso alerta">{{ aviso }}</div>
+  {% endfor %}
+
+  <section>
+    <div class="grade">
+      <div class="carta ciano">
+        <div class="rotulo">Agenda de {{ dados.rotulo_dia }}</div>
+        <div class="valor">{{ dados.total }}</div>
+        <div class="nota">{{ dados.data_alvo }}</div>
+      </div>
+      <div class="carta ciano">
+        <div class="rotulo">Confirmadas</div>
+        <div class="valor">{{ '%.0f'|format(dados.pct_confirmado * 100) }}%</div>
+        <div class="nota">{{ dados.confirmados }} de {{ dados.total }}</div>
+      </div>
+      {% for r in dados.confirmado %}
+      <div class="carta">
+        <div class="rotulo">{{ r.nome }}</div>
+        <div class="valor">{{ '%.0f'|format(r.pct * 100) }}%</div>
+        <div class="nota">{{ r.confirmados }} de {{ r.total }} confirmadas</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Confirmação por região</h2>
+    <div class="tabela-caixa rolagem">
+      <table>
+        <thead>
+          <tr><th>Região</th><th>Agendadas</th><th>Confirmadas</th><th>Não confirmadas</th><th>% confirmado</th></tr>
+        </thead>
+        <tbody>
+          {% for r in dados.confirmado %}
+          <tr>
+            <td><strong>{{ r.nome }}</strong></td>
+            <td>{{ r.total }}</td>
+            <td>{{ r.confirmados }}</td>
+            <td>{{ r.nao }}</td>
+            <td>
+              <span class="etiqueta info">{{ '%.1f'|format(r.pct * 100) }}%</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Confirmação por tipo de serviço</h2>
+    <div class="painel-grade">
+      {% for r in dados.confirmado %}
+      <div class="painel-carta">
+        <header>
+          <h3>{{ r.nome }}</h3>
+          <span class="quando">{{ r.confirmados }} de {{ r.total }} confirmadas</span>
+        </header>
+        <div class="barras">
+          {% for t in r.por_tipo %}
+            {{ barra(t.nome, t.confirmados, t.total, 'var(--ciano)') }}
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  {% if dados.efetividade %}
+  <section>
+    <h2>Efetividade</h2>
+    <div class="painel-grade">
+      {% for r in dados.efetividade %}
+      <div class="painel-carta">
+        <header>
+          <h3>{{ r.nome }}</h3>
+          <span class="quando">{{ r.total }} O.S. · {{ '%.1f'|format(r.pct * 100) }}% produtivas</span>
+        </header>
+        <div class="barras">
+          {{ barra('Produtivas', r.produtivas, r.total, 'var(--verde)') }}
+          {{ barra('Não produtivas', r.nao_produtivas, r.total, '#607B8B') }}
+        </div>
+        {% if r.nao_produtivas %}
+        <header style="border-top:1px solid var(--borda); border-bottom:none">
+          <h3 style="font-size:12.5px; color:var(--texto-fraco); letter-spacing:1px">
+            OFENSORES DA NÃO PRODUTIVIDADE
+          </h3>
+        </header>
+        <div class="barras">
+          {% for o in r.ofensores %}
+            {% if o.quantidade %}
+              {{ barra(o.nome|capitalize, o.quantidade, r.nao_produtivas, 'var(--ciano)') }}
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if dados.operadores %}
+  <section>
+    <h2>Efetividade por operador</h2>
+    <div class="tabela-caixa rolagem">
+      <table>
+        <thead>
+          <tr>
+            <th>Operador</th><th>Confirmadas</th><th>Produtivas</th>
+            <th>Técnicas (fora da conta)</th><th>Efetividade</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in dados.operadores %}
+          <tr>
+            <td><strong>{{ o.nome }}</strong></td>
+            <td>{{ o.total }}</td>
+            <td>{{ o.produtivos }}</td>
+            <td>{{ o.tecnicos }}</td>
+            <td>
+              <span class="etiqueta {{ 'online' if o.pct >= 0.8 else ('neutro' if o.pct >= 0.5 else 'offline') }}">
+                {{ '%.1f'|format(o.pct * 100) }}%
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="rodape" style="text-align:left; border:none; padding:10px 2px">
+      A efetividade do operador desconta as O.S. com motivo técnico, que não dependem da confirmação.
+    </div>
+  </section>
+  {% endif %}
+
+  {% if dados.preenchimento %}
+  <section>
+    <h2>Preenchimento de forms</h2>
+    <div class="rodape" style="text-align:left; border:none; padding:0 2px 12px">
+      Total histórico de formulários preenchidos por cada operador — não só do dia consultado.
+    </div>
+    <div class="tabela-caixa">
+      <div class="preenchimento-lista">
+        {% set cores = {'Confirmado': 'var(--verde)', 'Cancelado': '#6495ED', 'Reagendamento': '#4682B4'} %}
+        {% for op in dados.preenchimento %}
+          <div class="preenchimento-operador">
+            <span class="nome">{{ op.nome }}</span>
+            <div class="barras-operador">
+              {% for s in op.por_status %}
+                {{ barra_pct(s.nome, s.quantidade, s.pct, cores[s.nome]) }}
+              {% endfor %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="rodape" style="text-align:left; border:none; padding:10px 2px">
+      A barra mostra a participação do operador no total da empresa para cada status
+      (ex.: quantos dos cancelamentos de todo mundo foram dele).
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="rodape" style="text-align:left; border:none; padding:6px 2px">
+    Apurado às {{ dados.gerado_em }} · forms: {{ dados.origem_forms }}
+  </div>
+
+{% endif %}

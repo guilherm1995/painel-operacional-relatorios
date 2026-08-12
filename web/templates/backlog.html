@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block titulo %}Backlog — {{ titulo_site }}{% endblock %}
+
+{% block corpo %}
+<main>
+  <div class="titulo-pagina">
+    <h1>Backlog do monitoramento</h1>
+    <span class="sub">
+      <span class="pulso {{ 'on' if bot.rodando else 'off' }}"></span>
+      {{ 'bot ativo' if bot.rodando else 'bot parado' }}
+      {% if bot.log_em %}· último log {{ bot.log_em }}{% endif %}
+    </span>
+    <span class="titulo-acoes">
+      {% if gerado_em %}
+        <span class="sub">imagens de {{ gerado_em }}</span>
+      {% endif %}
+      <button class="botao secundario" type="button" id="recarregar">Recarregar</button>
+      <button class="botao" type="button" id="atualizar">Gerar backlog novo</button>
+    </span>
+  </div>
+
+  <div class="aviso" id="resposta-geracao" style="display:none"></div>
+
+  <div class="aviso ok" id="tem-novidade" style="display:none">
+    O bot gerou imagens novas.
+    <a href="#" onclick="location.reload(); return false;"><strong>Recarregar</strong></a>
+  </div>
+
+  {% if not imagens %}
+    <div class="aviso alerta">
+      Nenhuma imagem de backlog encontrada em <code>{{ pasta_relatorios }}</code>.
+      Elas aparecem aqui assim que o bot de monitoramento gerar a primeira.
+    </div>
+  {% endif %}
+
+  {# Lembrete de manter o OFS GERAL atualizado: o "Enviado D0" depende dele.
+     O veredito vem de backlog.status_ofs_do_backlog(), que usa o mesmo limite
+     de horas do bot -- a tela nunca diz "vale" enquanto o bot ignora. #}
+  <div class="aviso {{ '' if ofs.vale else 'alerta' }}">
+    <strong>O "Enviado D0" cruza o backlog com o OFS GERAL.</strong>
+    No CAMPO, nem tudo que está agendado para hoje aparece como D0: quando a O.S. dá erro
+    de integração, ela é puxada manualmente pelo OFS e o chamado não registra o D0.
+    Por isso, se o contrato estiver agendado para <strong>hoje</strong> no OFS GERAL,
+    ele entra no Enviado D0 mesmo que o CAMPO não marque — é o que dá a visão real.
+    {% if not ofs.existe %}
+      <br><strong>O OFS GERAL não foi encontrado.</strong> O Enviado D0 está saindo só
+      com o que o CAMPO marcou, ou seja, menor que o real. Envie o arquivo abaixo.
+    {% elif not ofs.vale %}
+      <br><strong>O OFS GERAL está de {{ ofs.quando }} (há {{ ofs.horas|round|int }}h)
+      e o cruzamento está desligado</strong> — acima de {{ ofs.limite_horas }}h o bot
+      ignora o arquivo e volta à regra antiga, contando só o que o CAMPO marcou, para não
+      montar um número com agenda vencida. Envie o OFS do dia abaixo e gere o backlog
+      de novo.
+    {% else %}
+      <br>Cruzamento <strong>ligado</strong>, com o OFS de {{ ofs.quando }}
+      (há {{ ofs.horas|round|int }}h). Acima de {{ ofs.limite_horas }}h ele é desligado
+      sozinho — envie a agenda nova sempre que sair.
+    {% endif %}
+  </div>
+
+  {% with volta = "/backlog" %}{% include "_fontes.html" %}{% endwith %}
+
+  {% if est.disponivel %}
+  <section>
+    <h2>Situação</h2>
+    <div class="grade">
+      {# Só mostra número quando há leitura nova do bot -- ver estatisticas()
+         em fontes/backlog.py. Sem isso a carta exibia o último valor gravado
+         como se fosse o de agora. #}
+      <div class="carta {{ 'laranja' if est.capex_fresco else '' }}">
+        <div class="rotulo">CAPEX pendente Litoral</div>
+        <div class="valor">{{ est.capex_pendente_litoral_sp if est.capex_fresco else "—" }}</div>
+        {% if not est.capex_fresco %}
+        <div class="nota">bot sem gravar nada{% if est.minutos is not none %} há {{ est.minutos }} min{% endif %}</div>
+        {% endif %}
+      </div>
+      <div class="carta {{ 'laranja' if est.capex_fresco else '' }}">
+        <div class="rotulo">CAPEX pendente Sul RJ</div>
+        <div class="valor">{{ est.capex_pendente_sul_rj if est.capex_fresco else "—" }}</div>
+        {% if not est.capex_fresco %}
+        <div class="nota">bot sem gravar nada{% if est.minutos is not none %} há {{ est.minutos }} min{% endif %}</div>
+        {% endif %}
+      </div>
+      <div class="carta ciano">
+        <div class="rotulo">Entrantes hoje</div>
+        <div class="valor">{{ entrantes.total }}</div>
+        <div class="nota">{{ entrantes.linhas|length }} unidades</div>
+      </div>
+      <div class="carta {{ 'vermelho' if est.erros_log_hoje else 'verde' }}">
+        <div class="rotulo">Erros no log hoje</div>
+        <div class="valor">{{ est.erros_log_hoje }}</div>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if entrantes.serie|length > 1 %}
+  <section>
+    <h2>Entrantes CAPEX — últimos dias</h2>
+    <div class="tabela-caixa">
+      <div class="barras">
+        {% for ponto in entrantes.serie %}
+        <div class="barra-linha">
+          <span class="nome">{{ ponto.data }}</span>
+          <span class="trilho">
+            <span class="preenchimento" style="width: {{ (ponto.total / entrantes.maximo_serie * 100) if entrantes.maximo_serie else 0 }}%"></span>
+          </span>
+          <span class="num">{{ ponto.total }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  {% for regiao, itens in imagens_por_regiao.items() %}
+  <section>
+    <h2>{{ regiao }}</h2>
+    <div class="painel-grade">
+      {% for img in itens %}
+      <div class="painel-carta">
+        <header>
+          <h3>{{ img.assunto }}</h3>
+          <span class="quando {{ 'velho' if img.velho }}">{{ img.quando }}</span>
+        </header>
+        <div class="moldura-escura">
+          <img src="/backlog/imagem/{{ img.arquivo }}?v={{ img.minutos }}" alt="{{ img.assunto }}" loading="lazy">
+        </div>
+        <header style="border-top:1px solid var(--borda);border-bottom:none">
+          <a class="botao secundario" href="/backlog/imagem/{{ img.arquivo }}?baixar=1" download>Baixar PNG</a>
+        </header>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+
+  <script>
+  (function () {
+    document.getElementById("recarregar")
+            .addEventListener("click", function () { location.reload(); });
+
+    // pede ao bot um backlog novo - só ele consegue gerar, porque a lista de
+    // chamados fica na memória do processo dele
+    var botao = document.getElementById("atualizar");
+    var resposta = document.getElementById("resposta-geracao");
+
+    // Enquanto o bot pode estar gerando, o botão fica travado com a contagem
+    // à vista. O clique repetido é o que fazia o grupo receber as mesmas
+    // imagens 2 ou 3 vezes - o servidor também barra, isto aqui é para o
+    // operador enxergar que o pedido está de pé em vez de achar que falhou.
+    var segundosTrava = {{ minutos_entre_pedidos }} * 60;
+    var contagem = null;
+
+    function liberarBotao() {
+      clearInterval(contagem);
+      botao.disabled = false;
+      botao.textContent = "Gerar backlog novo";
+    }
+
+    function segurarBotao() {
+      var resta = segundosTrava;
+      clearInterval(contagem);
+      botao.disabled = true;
+      function pintar() {
+        var m = Math.floor(resta / 60), s = resta % 60;
+        botao.textContent = "Gerando… aguarde " + m + ":" + (s < 10 ? "0" : "") + s;
+      }
+      pintar();
+      contagem = setInterval(function () {
+        resta -= 1;
+        if (resta <= 0) { liberarBotao(); return; }
+        pintar();
+      }, 1000);
+    }
+
+    botao.addEventListener("click", function () {
+      botao.disabled = true;
+      botao.textContent = "Pedindo ao bot…";
+      resposta.style.display = "none";
+      fetch("/backlog/gerar", { method: "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          // "aguarde" = o pedido já está com o bot (repetido, ou a resposta
+          // demorou a voltar). Não é falha: insistir abre uma 2ª rodada.
+          var aguarde = !d.ok && (d.repetido || d.demorou);
+          resposta.className = "aviso " + (d.ok ? "ok" : aguarde ? "alerta" : "erro");
+          resposta.textContent = d.ok ? d.mensagem : d.erro;
+          resposta.style.display = "block";
+          if (d.ok || aguarde) { segurarBotao(); } else { liberarBotao(); }
+        })
+        .catch(function () {
+          resposta.className = "aviso erro";
+          resposta.textContent = "Não consegui enviar o pedido. Tente de novo.";
+          resposta.style.display = "block";
+          liberarBotao();
+        });
+    });
+
+    // o bot gera as imagens no ritmo dele; aqui só percebemos quando muda
+    var marcaAtual = {{ marca | tojson }};
+    setInterval(function () {
+      fetch("/backlog/estado")
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.marca && d.marca !== marcaAtual) {
+            document.getElementById("tem-novidade").style.display = "block";
+          }
+        })
+        .catch(function () { /* servidor fora do ar: tenta no proximo ciclo */ });
+    }, 60000);
+  })();
+  </script>
+
+  <section>
+    <h2>Log do bot ao vivo</h2>
+    <div class="log" id="log">
+      {% for linha in log %}
+        <div class="linha {{ linha.nivel }}">{{ linha.texto }}</div>
+      {% endfor %}
+      {% if not log %}<div class="linha">Log não encontrado em {{ caminho_log }}.</div>{% endif %}
+    </div>
+  </section>
+</main>
+{% endblock %}

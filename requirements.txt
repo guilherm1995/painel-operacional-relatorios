@@ -1,0 +1,8 @@
+pandas
+openpyxl
+Pillow
+fastapi
+uvicorn[standard]
+python-multipart
+jinja2
+playwright

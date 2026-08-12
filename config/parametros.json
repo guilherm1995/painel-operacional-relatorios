@@ -1,0 +1,81 @@
+{
+  "_origem": "Gerado por extrair_parametros.py a partir da aba BASE da planilha.",
+  "_nota": "Valores de exemplo. Rode extrair_parametros.py com a sua planilha para gerar o arquivo real.",
+  "pontuacao": {
+    "ATIVAÇÃO": {
+      "valor": 62.5,
+      "pontos": 1.0
+    },
+    "REPARO": {
+      "valor": 40.0,
+      "pontos": 0.64
+    },
+    "MUDANÇA DE ENDEREÇO": {
+      "valor": 55.0,
+      "pontos": 0.88
+    },
+    "UPGRADE": {
+      "valor": 30.0,
+      "pontos": 0.48
+    },
+    "ALMOÇO": {
+      "valor": 0,
+      "pontos": 0
+    }
+  },
+  "status": {
+    "CONCLUÍDO": "OK",
+    "EM CAMPO": "OK",
+    "PENDENTE": "PEND",
+    "NÃO INICIADO": "PEND",
+    "CANCELADO": "INFOR",
+    "SUSPENSO": "INFOR"
+  },
+  "clusters": {
+    "CIDADE EXEMPLO A": "CL1",
+    "CIDADE EXEMPLO B": "CL1",
+    "CIDADE EXEMPLO C": "CL2",
+    "CIDADE EXEMPLO D": "CL2",
+    "CIDADE EXEMPLO E": "CL3"
+  },
+  "motivos": {
+    "CLIENTE AUSENTE": "IMPRODUTIVA",
+    "SEM VIABILIDADE": "IMPRODUTIVA",
+    "ENDEREÇO NÃO LOCALIZADO": "IMPRODUTIVA",
+    "CONCLUÍDO COM ÊXITO": "PRODUTIVA"
+  },
+  "meta_carga": {
+    "CL1_ATIVAÇÃO": {
+      "semana": 30,
+      "sabado": 21,
+      "domingo": 9
+    },
+    "CL1_REPARO": {
+      "semana": 18,
+      "sabado": 12,
+      "domingo": 5
+    },
+    "CL2_ATIVAÇÃO": {
+      "semana": 22,
+      "sabado": 15,
+      "domingo": 6
+    }
+  },
+  "meta_financeira": {
+    "CL1": {
+      "semana": 10000.0,
+      "sabado": 7000.0,
+      "domingo": 3000.0
+    },
+    "CL2": {
+      "semana": 8000.0,
+      "sabado": 5600.0,
+      "domingo": 2400.0
+    },
+    "CL3": {
+      "semana": 4000.0,
+      "sabado": 2800.0,
+      "domingo": 1200.0
+    }
+  }
+}

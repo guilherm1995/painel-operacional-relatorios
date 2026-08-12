@@ -1,0 +1,87 @@
+{# painel de fontes de dados, com idade e botao de envio #}
+<section>
+  <h2>Fontes de dados</h2>
+  <div class="fontes">
+    {% for arq in arquivos %}
+    <form class="fonte" method="post" action="/garantias/enviar" enctype="multipart/form-data">
+      <input type="hidden" name="alvo" value="{{ arq.nome }}">
+      <input type="hidden" name="volta" value="{{ volta }}">
+      <div class="fonte-info">
+        <div class="fonte-nome">
+          {{ arq.rotulo }}
+          {% if arq.existe %}
+            <span class="selo {{ 'velho' if arq.velho else 'novo' }}">
+              {% if arq.dias < 1 %}hoje{% elif arq.dias < 2 %}ontem{% else %}há {{ arq.dias|round|int }} dias{% endif %}
+            </span>
+          {% else %}
+            <span class="selo ausente">não encontrada</span>
+          {% endif %}
+        </div>
+        <div class="fonte-detalhe">
+          {% if arq.existe %}
+            {{ arq.quando }} · {{ arq.onde }}{% if arq.enviado_pelo_site %} · enviada pelo site{% endif %}
+          {% else %}
+            Envie <code>{{ arq.nome }}</code> — contém {{ arq.descricao }}.
+          {% endif %}
+        </div>
+        {# A cópia que o bot lê. Enquanto ela estiver atrasada, a tela e o bot
+           avaliam garantias por bases diferentes -- por isso aparece aqui. #}
+        {% if arq.bot.aplicavel and arq.existe and not arq.bot.mesma_copia %}
+        <div class="fonte-bot {{ 'igual' if arq.bot.igual else 'divergente' }}">
+          {% if arq.bot.igual %}
+            Bot: usando esta mesma base.
+          {% elif not arq.bot.pasta_existe %}
+            Bot: pasta não encontrada nesta máquina ({{ arq.bot.pasta }}).
+          {% elif arq.bot.existe %}
+            Bot: ainda com a base de {{ arq.bot.quando }} — ele não vai reavaliar as garantias até receber esta.
+          {% else %}
+            Bot: sem nenhuma base na pasta dele — a verificação de garantia está desligada do lado dele.
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+      <div class="fonte-acao">
+        <input type="file" name="planilha" accept=".xlsx,.xlsm,.csv" id="fonte-{{ loop.index }}">
+        <button class="botao secundario" type="button" data-abre="fonte-{{ loop.index }}">
+          {{ 'Atualizar' if arq.existe else 'Enviar' }}
+        </button>
+        {# formaction em vez de um <form> próprio: este bloco JÁ é um form e
+           HTML não permite aninhar. Reaproveita os mesmos campos ocultos. #}
+        {% if arq.bot.aplicavel and arq.existe and not arq.bot.mesma_copia %}
+        <button class="botao {{ 'secundario' if arq.bot.igual else 'atencao' }}" type="submit"
+                formaction="/garantias/enviar-ao-bot" data-espera="Enviando ao bot…"
+                title="Copia esta base para a pasta do bot; ele recarrega e reavalia os reparos pendentes.">
+          Enviar ao bot
+        </button>
+        {% endif %}
+      </div>
+    </form>
+    {% endfor %}
+  </div>
+</section>
+
+<script>
+(function () {
+  document.querySelectorAll(".fonte [data-abre]").forEach(function (b) {
+    b.addEventListener("click", function () { document.getElementById(b.dataset.abre).click(); });
+  });
+  document.querySelectorAll(".fonte input[type=file]").forEach(function (campo) {
+    campo.addEventListener("change", function () {
+      if (!campo.files.length) return;
+      var form = campo.closest("form"), botao = form.querySelector("button");
+      botao.disabled = true; botao.textContent = "Enviando…";
+      form.submit();
+    });
+  });
+  // A troca do arquivo do bot pode insistir alguns segundos quando ele está
+  // lendo a base -- sem aviso o operador clica de novo achando que travou.
+  // Só o rótulo muda: `disabled` num botão de submit chega a cancelar o envio
+  // em alguns navegadores, e a classe já barra o segundo clique pelo CSS.
+  document.querySelectorAll(".fonte [data-espera]").forEach(function (botao) {
+    botao.addEventListener("click", function () {
+      botao.textContent = botao.dataset.espera;
+      botao.classList.add("ocupado");
+    });
+  });
+})();
+</script>

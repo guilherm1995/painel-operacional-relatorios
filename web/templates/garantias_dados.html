@@ -1,0 +1,167 @@
+{% if dados.erro %}
+  <div class="aviso erro">{{ dados.erro }}</div>
+{% else %}
+
+  {% if dados.erro_autenticador %}
+    <div class="aviso alerta">{{ dados.erro_autenticador }} A lista continua válida, só sem o status online.</div>
+  {% endif %}
+
+  <section>
+    <div class="grade">
+      <div class="carta ciano">
+        <div class="rotulo">Garantias em aberto</div>
+        <div class="valor">{{ dados.total }}</div>
+        <div class="nota">apurado às {{ dados.gerado_em }}</div>
+      </div>
+      {% if autenticador_ativo %}
+      <div class="carta verde">
+        <div class="rotulo">Online</div>
+        <div class="valor">{{ dados.online }}</div>
+      </div>
+      <div class="carta vermelho">
+        <div class="rotulo">Offline</div>
+        <div class="valor">{{ dados.offline }}</div>
+        <div class="nota">prioridade de atendimento</div>
+      </div>
+      {% endif %}
+      {% for regiao in dados.regioes %}
+      <div class="carta">
+        <div class="rotulo">{{ regiao.nome }}</div>
+        <div class="valor">{{ regiao.total }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  {% if dados.total == 0 %}
+    <div class="aviso ok">Sem garantias pendentes no momento.</div>
+  {% endif %}
+
+  {% for regiao in dados.regioes %}
+    {% if regiao.cidades %}
+    <section>
+      <div class="regiao-cabecalho">
+        <h3>{{ regiao.nome }}</h3>
+        <span class="contagem">{{ regiao.total }} garantia{{ 's' if regiao.total != 1 }}</span>
+      </div>
+      <div class="tabela-caixa">
+        {% for cidade in regiao.cidades %}
+          <div class="cidade">
+            {{ cidade.nome }}
+            <span class="contagem">{{ cidade.itens|length }}</span>
+          </div>
+          <div class="rolagem tabela-desktop">
+            <table class="tabela-garantias">
+              <colgroup>
+                <col style="width:12%">
+                {% if autenticador_ativo %}<col style="width:12%">{% endif %}
+                <col style="width:8%">
+                <col style="width:12%">
+                <col style="width:20%">
+                <col>
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Contrato</th>
+                  {% if autenticador_ativo %}<th>Status</th>{% endif %}
+                  <th>Aging</th>
+                  <th>Serviço</th>
+                  <th>Técnico (OFS)</th>
+                  <th>Endereço</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in cidade.itens %}
+                <tr>
+                  <td><strong>{{ item.contrato }}</strong></td>
+                  {% if autenticador_ativo %}
+                  <td>
+                    <span class="etiqueta {{ 'online' if item.status == 'ONLINE' else ('offline' if item.status == 'OFFLINE' else 'neutro') }}">
+                      {{ item.status }}
+                    </span>
+                  </td>
+                  {% endif %}
+                  <td>{{ item.aging }}d</td>
+                  <td>{{ item.servico }}</td>
+                  <td>{{ item.tecnico }}</td>
+                  <td class="livre">{{ item.endereco }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="cartoes-garantia">
+            {% for item in cidade.itens %}
+            <div class="cartao-garantia">
+              <div class="cartao-garantia-topo">
+                <strong>{{ item.contrato }}</strong>
+                {% if autenticador_ativo %}
+                <span class="etiqueta {{ 'online' if item.status == 'ONLINE' else ('offline' if item.status == 'OFFLINE' else 'neutro') }}">
+                  {{ item.status }}
+                </span>
+                {% endif %}
+              </div>
+              <div class="cartao-garantia-linha"><span>Serviço</span><span>{{ item.servico }}</span></div>
+              <div class="cartao-garantia-linha"><span>Aging</span><span>{{ item.aging }}d</span></div>
+              <div class="cartao-garantia-linha"><span>Técnico (OFS)</span><span>{{ item.tecnico }}</span></div>
+              <div class="cartao-garantia-endereco">{{ item.endereco }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  {% endfor %}
+
+  {% if dados.invalidos %}
+  <section>
+    <div class="regiao-cabecalho">
+      <h3 style="color:var(--laranja)">⚠️ Sigla inválida — verificar</h3>
+      <span class="contagem">{{ dados.invalidos|length }}</span>
+    </div>
+    <div class="tabela-caixa rolagem tabela-desktop">
+      <table class="tabela-garantias">
+        <colgroup>
+          <col style="width:12%">
+          <col style="width:12%">
+          <col style="width:8%">
+          <col style="width:12%">
+          <col style="width:20%">
+          <col>
+        </colgroup>
+        <thead>
+          <tr><th>Contrato</th><th>Unidade</th><th>Aging</th><th>Serviço</th><th>Técnico (OFS)</th><th>Endereço</th></tr>
+        </thead>
+        <tbody>
+          {% for item in dados.invalidos %}
+          <tr>
+            <td><strong>{{ item.contrato }}</strong></td>
+            <td>{{ item.unidade or '—' }}</td>
+            <td>{{ item.aging }}d</td>
+            <td>{{ item.servico }}</td>
+            <td>{{ item.tecnico }}</td>
+            <td class="livre">{{ item.endereco }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="cartoes-garantia">
+      {% for item in dados.invalidos %}
+      <div class="cartao-garantia">
+        <div class="cartao-garantia-topo">
+          <strong>{{ item.contrato }}</strong>
+          <span class="etiqueta neutro">{{ item.unidade or '—' }}</span>
+        </div>
+        <div class="cartao-garantia-linha"><span>Serviço</span><span>{{ item.servico }}</span></div>
+        <div class="cartao-garantia-linha"><span>Aging</span><span>{{ item.aging }}d</span></div>
+        <div class="cartao-garantia-linha"><span>Técnico (OFS)</span><span>{{ item.tecnico }}</span></div>
+        <div class="cartao-garantia-endereco">{{ item.endereco }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+{% endif %}

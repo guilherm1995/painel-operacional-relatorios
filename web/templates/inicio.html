@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block titulo %}Início — {{ titulo_site }}{% endblock %}
+
+{% block corpo %}
+<main>
+  <div class="titulo-pagina">
+    <h1>Visão geral</h1>
+    <span class="sub">{{ agora }}</span>
+  </div>
+
+  {% for problema in problemas %}
+    <div class="aviso alerta">{{ problema }}</div>
+  {% endfor %}
+
+  <section>
+    <h2>Bot de monitoramento</h2>
+    {% if est.disponivel %}
+    <div class="grade">
+      {# Sem leitura nova do bot o numero nao vale: mostrar o ultimo valor como
+         se fosse atual ja confundiu antes. Nesse caso a carta diz "—". #}
+      <div class="carta {{ 'laranja' if est.capex_fresco else '' }}">
+        <div class="rotulo">CAPEX pendente</div>
+        {% if est.capex_fresco %}
+        <div class="valor">{{ est.capex_pendente_total }}</div>
+        <div class="nota">Litoral {{ est.capex_pendente_litoral_sp }} · Sul RJ {{ est.capex_pendente_sul_rj }}</div>
+        {% else %}
+        <div class="valor">—</div>
+        <div class="nota">
+          bot sem gravar nada
+          {%- if est.minutos is not none %} há {{ est.minutos }} min{% endif %}
+          {%- if est.quando %} · última leitura {{ est.quando }}{% endif %}
+        </div>
+        {% endif %}
+      </div>
+      <div class="carta ciano">
+        <div class="rotulo">Notificadas hoje</div>
+        <div class="valor">{{ est.capex_notificadas_hoje }}</div>
+        <div class="nota">O.S. de CAPEX avisadas</div>
+      </div>
+      <div class="carta verde">
+        <div class="rotulo">Garantias notificadas</div>
+        <div class="valor">{{ est.garantias_notificadas_hoje }}</div>
+        <div class="nota">no dia {{ est.data_referencia }}</div>
+      </div>
+      <div class="carta">
+        <div class="rotulo">O.S. analisadas</div>
+        <div class="valor">{{ "{:,}".format(est.os_analisadas_hoje).replace(",", ".") }}</div>
+        <div class="nota">desde o início da contagem</div>
+      </div>
+      <div class="carta {{ 'vermelho' if est.erros_log_hoje else 'verde' }}">
+        <div class="rotulo">Erros no log</div>
+        <div class="valor">{{ est.erros_log_hoje }}</div>
+        <div class="nota">
+          <span class="pulso {{ 'on' if bot.rodando else 'off' }}"></span>
+          {{ 'bot ativo' if bot.rodando else 'bot parado' }} · {{ bot.log_em or 'sem log' }}
+        </div>
+      </div>
+    </div>
+    {% else %}
+      <div class="aviso alerta">
+        Ainda não encontrei <code>dados/estatisticas_status.json</code> na pasta do bot.
+        Os números aparecem assim que ele rodar uma vez.
+      </div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Painel do dia</h2>
+    <div class="painel-grade">
+      {% for tela in telas %}
+      <div class="painel-carta">
+        <header>
+          <h3>{{ tela.titulo }}</h3>
+          <span class="quando">{{ tela.quando if tela.existe else 'não gerado' }}</span>
+        </header>
+        {% if tela.existe %}
+          <div class="moldura"><img src="/painel/imagem/{{ tela.nome }}?v={{ tela.minutos }}" alt="{{ tela.titulo }}" loading="lazy"></div>
+        {% else %}
+          <div class="vazio">Envie a extração do dia na aba <a href="/painel">Painel</a> para gerar.</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Entrantes CAPEX de hoje</h2>
+    <div class="tabela-caixa">
+      {% if entrantes.linhas %}
+      <div class="barras">
+        {% for linha in entrantes.linhas %}
+        <div class="barra-linha">
+          <span class="nome">{{ linha.nome }} <small style="opacity:.6">{{ linha.sigla }}</small></span>
+          <span class="trilho">
+            <span class="preenchimento" style="width: {{ (linha.quantidade / entrantes.linhas[0].quantidade * 100) if entrantes.linhas[0].quantidade else 0 }}%"></span>
+          </span>
+          <span class="num">{{ linha.quantidade }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+        <div class="vazio" style="padding:30px;text-align:center;color:var(--texto-fraco)">Sem entrantes registrados hoje.</div>
+      {% endif %}
+    </div>
+  </section>
+</main>
+{% endblock %}
