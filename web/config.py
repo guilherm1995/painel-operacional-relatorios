@@ -162,6 +162,18 @@ class Config:
                     f"fica indisponível. Procurei em: "
                     + " · ".join(str(p) for p in self.pastas_de_dados())
                 )
+
+        # Aviso à parte, e mais brando: sem esta base o site continua inteiro
+        # e a garantia também. O que para é o alerta de reincidência do bot --
+        # e ele para EM SILÊNCIO, que é justamente o motivo de o aviso existir.
+        if self.localizar_dado("base improdutivas 30 dias.xlsx") is None:
+            avisos.append(
+                "Não encontrei 'base improdutivas 30 dias.xlsx' — o bot não vai "
+                "avisar quando um entrante já tiver sido improdutiva nos "
+                "últimos 30 dias. "
+                "Envie pela página Garantias (exportação do OFS dos últimos 30 "
+                "dias, SEM o filtro de status concluído)."
+            )
         return avisos
 
 
