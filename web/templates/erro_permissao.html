@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block titulo %}Sem permissão — {{ titulo_site }}{% endblock %}
+
+{% block corpo %}
+<main>
+  <div class="titulo-pagina">
+    <h1>Sem permissão</h1>
+  </div>
+  <div class="tabela-caixa">
+    <p class="nota">
+      Esta área é restrita a administradores. Caso necessite de acesso,
+      solicite a um administrador a alteração do seu perfil em
+      <strong>Usuários</strong>.
+    </p>
+  </div>
+</main>
+{% endblock %}

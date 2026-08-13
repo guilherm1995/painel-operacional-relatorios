@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import re
 import secrets
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
@@ -23,6 +25,7 @@ RAIZ = Path(__file__).resolve().parent.parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
+from web import acesso, correio        # noqa: E402
 from web.config import CONFIG          # noqa: E402
 from web.fontes import (alertas, backlog, confirmacao, garantias,  # noqa: E402
                         painel, planilhas)
@@ -43,10 +46,12 @@ CREDITO_ANO = _creditos.group(2) if _creditos else str(dt.datetime.now().year)
 app = FastAPI(title=CONFIG.titulo, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
     SessionMiddleware,
-    secret_key=secrets.token_hex(32),
+    secret_key=acesso.chave_de_sessao(),
     max_age=CONFIG.sessao_horas * 3600,
+    # "lax" e o que faz a volta do Google funcionar: o retorno e uma navegacao
+    # de topo vinda de outro site, e com "strict" o cookie nao viajaria junto.
     same_site="lax",
-    https_only=False,
+    https_only=CONFIG.cookie_seguro,
 )
 app.mount("/static", StaticFiles(directory=AQUI / "static"), name="static")
 
@@ -57,50 +62,641 @@ def _render(request: Request, template: str, pagina: str, status_code: int = 200
     """Renderiza um template com o contexto que todas as telas precisam."""
     contexto = {
         "pagina": pagina,
-        "logado": bool(request.session.get("ok")),
+        # a mesma pergunta que as rotas fazem, e nao so a marca da sessao:
+        # senao quem foi revogado continuaria vendo o menu completo
+        "logado": _autenticado(request),
         "titulo_site": CONFIG.titulo,
         "assinatura": CONFIG.assinatura,
         "credito_nome": CREDITO_NOME,
         "credito_ano": CREDITO_ANO,
         "autenticador_ativo": CONFIG.autenticador_ativo,
         "versao_estatica": VERSAO_ESTATICA,
+        "usuario": request.session.get("nome") or request.session.get("email") or "",
+        "sou_admin": acesso.e_admin(request.session.get("email", "")),
         **extra,
     }
     return paginas.TemplateResponse(request, template, contexto, status_code=status_code)
 
 
 def _autenticado(request: Request) -> bool:
-    return bool(request.session.get("ok"))
+    """Sessao aberta E e-mail ainda na lista de acesso.
+
+    Conferir a lista a cada pedido, e nao so no login, e o que faz tirar
+    alguem de 'emails_autorizados' valer na hora -- sem isso a pessoa
+    continuaria dentro ate a sessao vencer, o que pode ser meio dia.
+    """
+    if not request.session.get("ok"):
+        return False
+    if not acesso.autorizado(request.session.get("email", "")):
+        request.session.clear()
+        return False
+    return True
 
 
 def _para_login(request: Request) -> RedirectResponse:
-    destino = request.url.path
+    destino = quote(request.url.path, safe="/")
     return RedirectResponse(f"/entrar?destino={destino}", status_code=303)
 
 
 # --------------------------------------------------------------------------
 # acesso
 # --------------------------------------------------------------------------
+porteiro = logging.getLogger("operacional.acesso")
+
+
+def _destino_seguro(destino: str) -> str:
+    """So aceita caminho interno.
+
+    Sem isto, /entrar?destino=https://sitedogolpe... mandaria a pessoa para
+    fora logo depois de ela entrar, com cara de que foi o site que levou.
+    Barato de evitar, caro de descobrir depois.
+    """
+    destino = (destino or "/").strip()
+    if not destino.startswith("/") or destino.startswith("//"):
+        return "/"
+    return destino
+
+
+def _humano(segundos: int) -> str:
+    if segundos < 60:
+        return f"{segundos} segundos"
+    minutos = round(segundos / 60)
+    return "1 minuto" if minutos == 1 else f"{minutos} minutos"
+
+
+def _tela(request: Request, etapa: str, destino: str = "/", erro=None, aviso=None,
+          email: str = "", status_code: int = 200, motivo: str = ""):
+    """As telas de entrada saem todas do mesmo template.
+
+    etapa: senha | navegador | primeiro | codigo | definir
+    motivo: so na etapa "codigo" -- primeiro (criar senha) ou navegador
+            (liberar dispositivo novo). Muda o texto, nao o caminho.
+    """
+    return _render(request, "login.html", "login", status_code=status_code,
+                   etapa=etapa, destino=destino, erro=erro, aviso=aviso,
+                   email=email, motivo=motivo,
+                   google_aqui=acesso.google_disponivel_aqui(request),
+                   smtp_ligado=CONFIG.smtp_ligado,
+                   minimo_senha=acesso.TAMANHO_MINIMO_SENHA,
+                   validade_codigo=acesso.VALIDADE_CODIGO_MIN)
+
+
+# --- navegadores conhecidos ------------------------------------------------
+# O cookie guarda so uma marca aleatoria. Quem decide se ela vale e o cadastro,
+# que guarda o sha256 dela -- roubar o arquivo nao da para forjar o cookie.
+COOKIE_NAVEGADOR = "operacional_navegador"
+
+_SISTEMAS = (("Android", "Android"), ("iPhone", "iPhone"), ("iPad", "iPad"),
+             ("Windows", "Windows"), ("Macintosh", "Mac"), ("Linux", "Linux"))
+_PROGRAMAS = (("Edg/", "Edge"), ("OPR/", "Opera"), ("Firefox", "Firefox"),
+              ("Chrome", "Chrome"), ("Safari", "Safari"))
+
+
+def _descricao_navegador(request: Request) -> str:
+    """Um rotulo legivel para a pessoa reconhecer o aparelho na lista.
+
+    E so etiqueta: nada aqui entra na decisao de confiar ou nao, porque o
+    User-Agent e escolhido por quem chama e pode dizer o que quiser.
+    """
+    ua = request.headers.get("user-agent", "")
+    programa = next((nome for marca, nome in _PROGRAMAS if marca in ua), "")
+    sistema = next((nome for marca, nome in _SISTEMAS if marca in ua), "")
+    if programa and sistema:
+        return f"{programa} no {sistema}"
+    return (programa or sistema or ua[:60] or "desconhecido")
+
+
+def _confiar_no_navegador(request: Request, resposta, email: str) -> None:
+    """Marca este navegador como conhecido e devolve o cookie correspondente."""
+    marca = request.cookies.get(COOKIE_NAVEGADOR, "")
+    try:
+        if acesso.USUARIOS.navegador_conhecido(email, marca):
+            acesso.USUARIOS.renovar_navegador(email, marca)
+        else:
+            marca = marca or acesso.nova_marca_de_navegador()
+            acesso.USUARIOS.registrar_navegador(
+                email, marca, _descricao_navegador(request))
+    except Exception as falha:
+        # perder o "lembrar deste navegador" custa um codigo a mais no proximo
+        # login; nao vale barrar quem ja provou quem e
+        porteiro.warning("não consegui lembrar o navegador de %s: %s", email, falha)
+        return
+    resposta.set_cookie(
+        COOKIE_NAVEGADOR, marca, max_age=acesso.DIAS_NAVEGADOR * 86400,
+        httponly=True, samesite="lax", secure=CONFIG.cookie_seguro, path="/")
+
+
+def _abrir_sessao(request: Request, email: str, nome: str, por: str,
+                  ip: str, destino: str) -> RedirectResponse:
+    request.session.clear()
+    request.session["ok"] = True
+    request.session["email"] = email
+    request.session["nome"] = nome or email
+    try:
+        acesso.USUARIOS.registrar_entrada(email, por, nome)
+    except Exception as falha:
+        # nao impedir a entrada por causa do cadastro: aqui e so historico
+        porteiro.warning("não consegui registrar a entrada de %s: %s", email, falha)
+    porteiro.info("entrou por %s: %s (%s)", por, email, ip)
+    resposta = RedirectResponse(destino, status_code=303)
+    # So se chega aqui depois de senha + (navegador conhecido ou codigo), entao
+    # todo caminho que abre sessao pode confiar na maquina.
+    _confiar_no_navegador(request, resposta, email)
+    return resposta
+
+
+def _bloqueado(request: Request, etapa: str, destino: str, ip: str, email: str = ""):
+    """Devolve a tela de espera se este IP estiver de castigo, senao None."""
+    espera = acesso.PORTARIA.bloqueio_restante(ip)
+    if not espera:
+        return None
+    porteiro.warning("%s bloqueado para %s por mais %ss", etapa, ip, espera)
+    return _tela(request, etapa, destino, email=email, status_code=429,
+                 erro=f"Número de tentativas excedido. Aguarde {_humano(espera)} "
+                      f"antes de tentar novamente.")
+
+
+def _punir(ip: str) -> int:
+    """Conta o erro e cobra o custo fixo. Devolve os segundos de castigo.
+
+    A rota e sincrona, entao o FastAPI ja a roda fora do laco de eventos --
+    este sleep segura quem tenta em rajada sem travar o resto do site.
+    """
+    espera = acesso.PORTARIA.errou(ip)
+    time.sleep(acesso.ATRASO_POR_ERRO_SEG)
+    return espera
+
+
+# --- e-mail e senha --------------------------------------------------------
 @app.get("/entrar", response_class=HTMLResponse)
-def tela_login(request: Request, destino: str = "/"):
+def tela_login(request: Request, destino: str = "/", erro: str = ""):
+    destino = _destino_seguro(destino)
     if _autenticado(request):
-        return RedirectResponse(destino or "/", status_code=303)
-    return _render(request, "login.html", "login", erro=None, destino=destino or "/")
+        return RedirectResponse(destino, status_code=303)
+    return _tela(request, "senha", destino, erro=erro or None)
 
 
 @app.post("/entrar", response_class=HTMLResponse)
-def fazer_login(request: Request, pin: str = Form(""), destino: str = Form("/")):
-    if secrets.compare_digest(str(pin).strip(), str(CONFIG.pin)):
-        request.session["ok"] = True
-        return RedirectResponse(destino or "/", status_code=303)
-    return _render(request, "login.html", "login", status_code=401,
-                   erro="PIN incorreto.", destino=destino or "/")
+def fazer_login(request: Request, email: str = Form(""), senha: str = Form(""),
+                destino: str = Form("/")):
+    destino = _destino_seguro(destino)
+    ip = acesso.ip_do_pedido(request)
+    email = acesso.normalizar_email(email)
+
+    if resposta := _bloqueado(request, "senha", destino, ip, email):
+        return resposta
+
+    if not email or not senha:
+        return _tela(request, "senha", destino, email=email, status_code=400,
+                     erro="Informe o e-mail e a senha.")
+
+    # Quem esta na lista mas ainda nao definiu senha vai direto para o caminho
+    # certo, em vez de bater de novo numa senha que nunca existiu.
+    if acesso.autorizado(email) and not acesso.USUARIOS.tem_senha(email):
+        return _tela(request, "primeiro", destino, email=email,
+                     aviso="Este e-mail ainda não possui senha cadastrada. Solicite "
+                           "um código de verificação para defini-la.")
+
+    guardado = acesso.USUARIOS.buscar(email).get("senha")
+    if acesso.autorizado(email) and guardado and acesso.senha_confere(senha, guardado):
+        acesso.PORTARIA.acertou(ip)
+        nome = acesso.USUARIOS.buscar(email).get("nome", "")
+        if acesso.USUARIOS.navegador_conhecido(
+                email, request.cookies.get(COOKIE_NAVEGADOR, "")):
+            return _abrir_sessao(request, email, nome, "senha", ip, destino)
+        # Senha certa, maquina que o site nunca viu -- que e exatamente o
+        # desenho de uma senha vazada: quem rouba tenta do computador dele.
+        # Antes de abrir, exigimos a prova de que a caixa de e-mail tambem e
+        # desta pessoa.
+        porteiro.info("navegador desconhecido para %s (%s)", email, ip)
+        request.session.clear()
+        request.session["pendente_email"] = email
+        request.session["pendente_ate"] = time.time() + 600
+        return _tela(request, "navegador", destino, email=email)
+
+    espera = _punir(ip)
+    porteiro.warning("senha errada para %r a partir de %s%s", email, ip,
+                     f" (bloqueado por {espera}s)" if espera else "")
+    if espera:
+        return _tela(request, "senha", destino, email=email, status_code=429,
+                     erro=f"Número de tentativas excedido. Aguarde {_humano(espera)} "
+                     f"antes de tentar novamente.")
+    return _tela(request, "senha", destino, email=email, status_code=401,
+                 erro="E-mail ou senha incorretos.")
+
+
+def _pendente(request: Request) -> str:
+    """Quem acertou a senha agora e ainda deve a segunda prova. Vazio se nao ha.
+
+    E esta janela que autoriza tanto o codigo quanto o Google a concluirem o
+    login num navegador novo. Sem ela, o botao do Google entraria sozinho -- que
+    e exatamente o que nao queremos.
+    """
+    email = acesso.normalizar_email(request.session.get("pendente_email", ""))
+    if not email or time.time() > float(request.session.get("pendente_ate") or 0):
+        return ""
+    return email
+
+
+def _enviar_codigo(request: Request, email: str, destino: str, motivo: str,
+                   etapa_no_erro: str):
+    """Gera o codigo, manda por e-mail e devolve a tela ja pronta.
+
+    Serve aos dois usos do codigo -- criar senha (motivo "primeiro") e liberar
+    um navegador novo (motivo "navegador"). O motivo fica na sessao porque e
+    ele que decide, la na conferencia, se o certo e abrir a sessao ou pedir a
+    senha nova.
+
+    Guardar o motivo na sessao e seguro porque ele nao concede nada sozinho:
+    sem o codigo, que so existe na caixa de e-mail da pessoa, ele nao abre
+    porta nenhuma.
+    """
+    if not CONFIG.smtp_ligado:
+        return _tela(request, etapa_no_erro, destino, email=email, status_code=503,
+                     erro="O envio de e-mail não está configurado. Contate o "
+                          "administrador do sistema.")
+
+    request.session["codigo_email"] = email
+    request.session["codigo_motivo"] = motivo
+
+    if falta := acesso.CODIGOS.pode_pedir(email):
+        return _tela(request, "codigo", destino, email=email, status_code=429,
+                     motivo=motivo,
+                     erro=f"Um código foi enviado recentemente. Caso não o tenha "
+                          f"recebido, solicite outro em {_humano(falta)}.")
+
+    codigo = acesso.CODIGOS.gerar(email)
+    assunto, corpo = correio.texto_do_codigo(codigo, acesso.VALIDADE_CODIGO_MIN)
+    try:
+        correio.enviar(email, assunto, corpo)
+    except correio.CorreioIndisponivel as falha:
+        request.session.pop("codigo_email", None)
+        request.session.pop("codigo_motivo", None)
+        return _tela(request, etapa_no_erro, destino, email=email, status_code=502,
+                     erro=str(falha))
+
+    return _tela(request, "codigo", destino, email=email, motivo=motivo,
+                 aviso=f"Um código de verificação foi enviado para {email}.")
+
+
+# --- primeiro acesso e senha esquecida (mesmo caminho) ---------------------
+@app.get("/entrar/primeiro", response_class=HTMLResponse)
+def tela_primeiro(request: Request, destino: str = "/"):
+    # quem ja esta dentro chega aqui pelo "Minha senha": adianta o e-mail dela
+    ja_dentro = request.session.get("email", "") if _autenticado(request) else ""
+    return _tela(request, "primeiro", _destino_seguro(destino), email=ja_dentro)
+
+
+@app.post("/entrar/primeiro", response_class=HTMLResponse)
+def pedir_codigo(request: Request, email: str = Form(""), destino: str = Form("/")):
+    destino = _destino_seguro(destino)
+    ip = acesso.ip_do_pedido(request)
+    email = acesso.normalizar_email(email)
+
+    if not acesso.autorizado(email):
+        porteiro.warning("código pedido para e-mail fora da lista: %r (%s)", email, ip)
+        # Dizer a verdade aqui e deliberado. E ferramenta interna, e a lista nao
+        # e segredo; ja o silencio transformaria um e-mail digitado errado numa
+        # espera sem fim, no meio de uma ocorrencia.
+        return _tela(request, "primeiro", destino, email=email, status_code=403,
+                     erro="Este e-mail não possui autorização de acesso.")
+
+    return _enviar_codigo(request, email, destino, "primeiro", "primeiro")
+
+
+@app.get("/entrar/codigo", response_class=HTMLResponse)
+def tela_codigo(request: Request, destino: str = "/"):
+    destino = _destino_seguro(destino)
+    email = acesso.normalizar_email(request.session.get("codigo_email", ""))
+    if not email:
+        return _tela(request, "primeiro", destino)
+    return _tela(request, "codigo", destino, email=email,
+                 motivo=str(request.session.get("codigo_motivo") or "primeiro"))
+
+
+@app.post("/entrar/navegador", response_class=HTMLResponse)
+def confirmar_navegador_por_codigo(request: Request, destino: str = Form("/")):
+    """A pessoa escolheu o código em vez do Google, no dispositivo novo."""
+    destino = _destino_seguro(destino)
+    email = _pendente(request)
+    if not email:
+        return _tela(request, "senha", destino, status_code=400,
+                     erro="A sessão de acesso expirou. Informe o e-mail e a "
+                          "senha novamente.")
+    return _enviar_codigo(request, email, destino, "navegador", "navegador")
+
+
+@app.post("/entrar/codigo/reenviar", response_class=HTMLResponse)
+def reenviar_codigo(request: Request, destino: str = Form("/")):
+    """Manda outro codigo mantendo o motivo do primeiro.
+
+    O e-mail vem da sessao, nunca do formulario: assim este botao nao vira uma
+    forma de disparar codigo para o endereco de outra pessoa.
+    """
+    destino = _destino_seguro(destino)
+    email = acesso.normalizar_email(request.session.get("codigo_email", ""))
+    motivo = str(request.session.get("codigo_motivo") or "primeiro")
+
+    if not email or not acesso.autorizado(email):
+        request.session.clear()
+        return _tela(request, "primeiro", destino, status_code=400,
+                     erro="A solicitação expirou. Informe o e-mail novamente.")
+
+    return _enviar_codigo(request, email, destino, motivo,
+                          "senha" if motivo == "navegador" else "primeiro")
+
+
+@app.post("/entrar/codigo", response_class=HTMLResponse)
+def conferir_codigo(request: Request, codigo: str = Form(""), destino: str = Form("/")):
+    destino = _destino_seguro(destino)
+    ip = acesso.ip_do_pedido(request)
+    email = acesso.normalizar_email(request.session.get("codigo_email", ""))
+
+    if not email:
+        return _tela(request, "primeiro", destino, status_code=400,
+                     erro="A solicitação expirou. Informe o e-mail novamente.")
+    if resposta := _bloqueado(request, "codigo", destino, ip, email):
+        return resposta
+
+    porque = str(request.session.get("codigo_motivo") or "primeiro")
+
+    certo, recusa = acesso.CODIGOS.conferir(email, codigo)
+    if not certo:
+        espera = _punir(ip)
+        porteiro.warning("código errado para %s a partir de %s", email, ip)
+        if espera:
+            return _tela(request, "codigo", destino, email=email, status_code=429,
+                         motivo=porque,
+                         erro=f"Número de tentativas excedido. Aguarde "
+                              f"{_humano(espera)} antes de tentar novamente.")
+        return _tela(request, "codigo", destino, email=email, status_code=401,
+                     motivo=porque, erro=recusa)
+
+    acesso.PORTARIA.acertou(ip)
+    request.session.pop("codigo_email", None)
+    request.session.pop("codigo_motivo", None)
+
+    # Navegador novo: a senha ja foi conferida antes de o codigo ser enviado, e
+    # o codigo acabou de provar a caixa de e-mail. Os dois fatores fecharam.
+    if porque == "navegador":
+        if _pendente(request) != email:
+            request.session.clear()
+            porteiro.warning("código de navegador sem senha conferida: %s (%s)", email, ip)
+            return _tela(request, "senha", destino, status_code=400,
+                         erro="A sessão de acesso expirou. Informe o e-mail e a "
+                              "senha novamente.")
+        if not acesso.autorizado(email):
+            request.session.clear()
+            porteiro.warning("código conferido, mas %s perdeu o acesso (%s)", email, ip)
+            return _tela(request, "senha", destino, status_code=403,
+                         erro="Este e-mail não possui mais autorização de acesso.")
+        nome = acesso.USUARIOS.buscar(email).get("nome", "")
+        porteiro.info("navegador novo liberado para %s (%s)", email, ip)
+        return _abrir_sessao(request, email, nome, "senha", ip, destino)
+
+    # janela curta e separada: ter conferido o codigo autoriza definir a senha,
+    # e so isso. Ainda nao e uma sessao aberta no site.
+    request.session["pode_definir"] = email
+    request.session["pode_definir_ate"] = time.time() + 600
+    porteiro.info("código conferido por %s (%s)", email, ip)
+    return _tela(request, "definir", destino, email=email,
+                 aviso="Código validado. Defina sua senha de acesso.")
+
+
+@app.post("/entrar/senha", response_class=HTMLResponse)
+def gravar_senha(request: Request, senha: str = Form(""), repetir: str = Form(""),
+                 destino: str = Form("/")):
+    destino = _destino_seguro(destino)
+    ip = acesso.ip_do_pedido(request)
+    email = acesso.normalizar_email(request.session.get("pode_definir", ""))
+    ate = float(request.session.get("pode_definir_ate") or 0)
+
+    if not email or time.time() > ate:
+        request.session.pop("pode_definir", None)
+        request.session.pop("pode_definir_ate", None)
+        return _tela(request, "primeiro", destino, status_code=400,
+                     erro="O prazo para definição da senha expirou. Solicite um novo código.")
+
+    if not acesso.autorizado(email):
+        request.session.clear()
+        porteiro.warning("tentativa de definir senha fora da lista: %s (%s)", email, ip)
+        return _tela(request, "senha", destino, status_code=403,
+                     erro="Este e-mail não possui mais autorização de acesso.")
+
+    if problema := acesso.problema_na_senha(senha, repetir):
+        return _tela(request, "definir", destino, email=email, status_code=400,
+                     erro=problema)
+
+    try:
+        acesso.USUARIOS.definir_senha(email, senha)
+    except OSError as falha:
+        porteiro.error("não consegui gravar a senha de %s: %s", email, falha)
+        return _tela(request, "definir", destino, email=email, status_code=500,
+                     erro="Não foi possível gravar a senha. Tente novamente.")
+
+    nome = acesso.USUARIOS.buscar(email).get("nome", "")
+    request.session.pop("pode_definir", None)
+    request.session.pop("pode_definir_ate", None)
+    porteiro.info("senha criada por %s (%s)", email, ip)
+    return _abrir_sessao(request, email, nome, "senha", ip, destino)
+
+
+# --- entrada pelo Google ---------------------------------------------------
+@app.get("/entrar/google")
+def entrar_com_google(request: Request, destino: str = "/"):
+    if not acesso.google_configurado():
+        return RedirectResponse("/entrar?erro=" + quote(
+            "A autenticação pelo Google não está configurada."), status_code=303)
+
+    # o "state" e o que amarra a ida e a volta: sem ele, alguem poderia induzir
+    # o navegador da vitima a completar um login que quem comecou foi o atacante
+    estado = secrets.token_urlsafe(24)
+    request.session["google_estado"] = estado
+    request.session["google_destino"] = _destino_seguro(destino)
+    return RedirectResponse(acesso.url_para_o_google(estado), status_code=303)
+
+
+@app.get("/entrar/google/retorno")
+def retorno_do_google(request: Request, code: str = "", state: str = "", error: str = ""):
+    ip = acesso.ip_do_pedido(request)
+    esperado = request.session.pop("google_estado", None)
+    destino = _destino_seguro(request.session.pop("google_destino", "/"))
+
+    def recusar(motivo: str, detalhe_log: str, status: int = 403):
+        porteiro.warning("Google recusado (%s): %s", ip, detalhe_log)
+        return _tela(request, "senha", destino, status_code=status, erro=motivo)
+
+    if error:
+        return recusar("A autenticação pelo Google foi cancelada.",
+                       f"erro do Google: {error}", 400)
+    if not code or not state:
+        return recusar("A autenticação pelo Google não foi concluída. Tente novamente.",
+                       "sem code/state", 400)
+    if not esperado or not secrets.compare_digest(state, esperado):
+        return recusar("A sessão de autenticação pelo Google expirou. Tente novamente.",
+                       "state nao confere", 400)
+
+    try:
+        dados = acesso.identidade_do_codigo(code)
+    except Exception as falha:
+        return recusar("Não foi possível contatar o Google no momento. Tente novamente.",
+                       f"{type(falha).__name__}: {falha}", 502)
+
+    email, nome = acesso.conta_do_google(dados)
+    if not email:
+        return recusar("A conta Google informada não possui e-mail verificado.",
+                       "sem e-mail verificado", 403)
+    if not acesso.autorizado(email):
+        return recusar(f"O e-mail {email} não possui autorização de acesso.",
+                       f"fora da lista: {email}")
+
+    porteiro.info("Google identificou %s (%s)", email, ip)
+
+    # Dispositivo novo, senha ja conferida: o Google acabou de provar a mesma
+    # coisa que o codigo provaria -- que aquela caixa de e-mail e desta pessoa.
+    # So aqui ele conclui um login, e so porque a senha veio antes.
+    if _pendente(request) == email:
+        nome = acesso.USUARIOS.buscar(email).get("nome", "") or nome
+        porteiro.info("dispositivo novo liberado pelo Google: %s (%s)", email, ip)
+        return _abrir_sessao(request, email, nome, "senha e Google", ip, destino)
+
+    # Fora dessa janela ele nao abre sessao. Diz QUEM e a pessoa, nao que ela
+    # sabe a senha -- e e a senha que separa "ela" de "alguem com o celular
+    # dela na mao". Entao identifica, e devolve ao caminho normal.
+    if not acesso.USUARIOS.tem_senha(email):
+        return _enviar_codigo(request, email, destino, "primeiro", "primeiro")
+    return _tela(request, "senha", destino, email=email,
+                 aviso=f"Conta confirmada: {email}. Informe a sua senha para "
+                       "concluir o acesso.")
 
 
 @app.get("/sair")
 def sair(request: Request):
+    quem = request.session.get("email") or request.session.get("nome") or "?"
     request.session.clear()
+    porteiro.info("saiu: %s", quem)
     return RedirectResponse("/entrar", status_code=303)
+
+
+# --------------------------------------------------------------------------
+# usuários (só admin)
+# --------------------------------------------------------------------------
+def _tela_usuarios(request: Request, erro=None, aviso=None, status_code: int = 200):
+    return _render(request, "usuarios.html", "usuarios", status_code=status_code,
+                   pessoas=acesso.USUARIOS.listar(),
+                   eu=acesso.normalizar_email(request.session.get("email", "")),
+                   erro=erro, aviso=aviso)
+
+
+def _so_admin(request: Request):
+    """Devolve a resposta de recusa, ou None se pode seguir."""
+    if not _autenticado(request):
+        return _para_login(request)
+    if not acesso.e_admin(request.session.get("email", "")):
+        porteiro.warning("acesso negado à tela de usuários para %s",
+                         request.session.get("email"))
+        return _render(request, "erro_permissao.html", "usuarios", status_code=403)
+    return None
+
+
+@app.get("/usuarios", response_class=HTMLResponse)
+def ver_usuarios(request: Request):
+    if recusa := _so_admin(request):
+        return recusa
+    return _tela_usuarios(request)
+
+
+def _mexer_no_cadastro(request: Request, acao, sucesso: str):
+    """Casca comum das ações: valida admin, executa e devolve a tela de novo."""
+    if recusa := _so_admin(request):
+        return recusa
+    try:
+        acao()
+    except (ValueError, acesso.SemAdmin) as falha:
+        return _tela_usuarios(request, erro=str(falha), status_code=400)
+    except OSError as falha:
+        porteiro.error("falha ao gravar o cadastro: %s", falha)
+        return _tela_usuarios(request, erro="Não foi possível gravar o cadastro.",
+                              status_code=500)
+    porteiro.info("cadastro alterado por %s: %s",
+                  request.session.get("email"), sucesso)
+    return _tela_usuarios(request, aviso=sucesso)
+
+
+@app.post("/usuarios/novo", response_class=HTMLResponse)
+def usuario_novo(request: Request, email: str = Form(""), nome: str = Form(""),
+                 papel: str = Form(acesso.PADRAO)):
+    email = acesso.normalizar_email(email)
+    if "@" not in email or "." not in email.split("@")[-1]:
+        if recusa := _so_admin(request):
+            return recusa
+        return _tela_usuarios(request, status_code=400,
+                              erro="Informe um endereço de e-mail válido.")
+    quem = request.session.get("email", "")
+    return _mexer_no_cadastro(
+        request,
+        lambda: acesso.USUARIOS.criar(email, nome, papel, quem),
+        f"Usuário {email} cadastrado. A senha será definida pelo próprio "
+        f"usuário no primeiro acesso.")
+
+
+@app.post("/usuarios/papel", response_class=HTMLResponse)
+def usuario_papel(request: Request, email: str = Form(""), papel: str = Form(acesso.PADRAO)):
+    email = acesso.normalizar_email(email)
+    eu = acesso.normalizar_email(request.session.get("email", ""))
+    if email == eu and papel != acesso.ADMIN:
+        if recusa := _so_admin(request):
+            return recusa
+        return _tela_usuarios(
+            request, status_code=400,
+            erro="Não é permitido remover o próprio perfil de administrador. "
+                 "Solicite a alteração a outro administrador.")
+    nome_papel = "administrador" if papel == acesso.ADMIN else "padrão"
+    return _mexer_no_cadastro(
+        request,
+        lambda: acesso.USUARIOS.definir_papel(email, papel),
+        f"O perfil de {email} foi alterado para {nome_papel}.")
+
+
+@app.post("/usuarios/ativo", response_class=HTMLResponse)
+def usuario_ativo(request: Request, email: str = Form(""), ativo: str = Form("")):
+    email = acesso.normalizar_email(email)
+    eu = acesso.normalizar_email(request.session.get("email", ""))
+    ligar = str(ativo).strip() == "1"
+    if email == eu and not ligar:
+        if recusa := _so_admin(request):
+            return recusa
+        return _tela_usuarios(request, status_code=400,
+                              erro="Não é permitido revogar o próprio acesso.")
+    return _mexer_no_cadastro(
+        request,
+        lambda: acesso.USUARIOS.definir_ativo(email, ligar),
+        f"O acesso de {email} foi {'reativado' if ligar else 'revogado'}.")
+
+
+@app.post("/usuarios/senha", response_class=HTMLResponse)
+def usuario_senha(request: Request, email: str = Form("")):
+    email = acesso.normalizar_email(email)
+    return _mexer_no_cadastro(
+        request,
+        lambda: acesso.USUARIOS.esquecer_senha(email),
+        f"A senha de {email} foi removida. O usuário deverá defini-la "
+        f"novamente pelo primeiro acesso.")
+
+
+@app.post("/usuarios/apagar", response_class=HTMLResponse)
+def usuario_apagar(request: Request, email: str = Form("")):
+    email = acesso.normalizar_email(email)
+    eu = acesso.normalizar_email(request.session.get("email", ""))
+    if email == eu:
+        if recusa := _so_admin(request):
+            return recusa
+        return _tela_usuarios(request, status_code=400,
+                              erro="Não é permitido excluir a própria conta.")
+    return _mexer_no_cadastro(
+        request,
+        lambda: acesso.USUARIOS.apagar(email),
+        f"O usuário {email} foi excluído do cadastro.")
 
 
 # --------------------------------------------------------------------------

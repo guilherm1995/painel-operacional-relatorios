@@ -59,10 +59,11 @@ def montar_mensagem_painel():
 
     linhas += [
         "",
-        f"🔑 PIN: {dados.get('pin', '(não informado)')}",
+        "🔐 Entre com o seu e-mail. No primeiro acesso, o site envia um código "
+        "para você criar a sua senha.",
         "",
         f"_Atualizado em {dados.get('atualizado_em', '?')}_",
-        "_O endereço muda quando o site reinicia — peça /painel de novo se falhar._",
+        "_Sem acesso? Peça a um administrador para cadastrar o seu e-mail._",
     ]
     return "\n".join(linhas)
 

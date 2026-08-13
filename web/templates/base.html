@@ -30,7 +30,13 @@
       <a href="/backlog" class="{{ 'ativo' if pagina == 'backlog' }}">Backlog</a>
       <a href="/confirmacao" class="{{ 'ativo' if pagina == 'confirmacao' }}">Confirmação</a>
       <a href="/garantias" class="{{ 'ativo' if pagina == 'garantias' }}">Garantias</a>
-      <a href="/sair" class="sair">Sair</a>
+      {% if sou_admin %}
+      <a href="/usuarios" class="{{ 'ativo' if pagina == 'usuarios' }}">Usuários</a>
+      {% endif %}
+      {# sem isto, quem esta logado nao tem como trocar a propria senha: o
+         caminho existe, mas so aparece na tela de quem esta de fora #}
+      <a href="/entrar/primeiro">Minha senha</a>
+      <a href="/sair" class="sair" title="{{ usuario }}">Sair</a>
     </nav>
   </div>
 </header>

@@ -646,21 +646,162 @@ tbody tr:hover { background: rgba(255, 255, 255, .05); }
   font-weight: 700;
 }
 .login-caixa p { color: var(--texto-fraco); font-size: 13.5px; margin-bottom: 24px; }
-.login-caixa input {
+.login-caixa .botao { width: 100%; justify-content: center; }
+
+/* campo comum: e-mail, senha, nome. Antes havia um so estilo aqui, desenhado
+   para o PIN de 6 digitos (centralizado, letter-spacing 9px). Com e-mail no
+   mesmo campo aquilo ficava ilegivel. */
+.campo-texto {
+  width: 100%;
+  padding: 14px 15px;
+  border-autenticador: 12px;
+  border: 1px solid var(--borda);
+  background: rgba(0, 0, 0, .3);
+  color: var(--texto);
+  font-size: 15px;
+  font-family: inherit;
+  margin-bottom: 12px;
+}
+.campo-texto:focus { outline: 2px solid var(--roxo); }
+.campo-texto::placeholder { color: var(--texto-fraco); }
+
+/* o codigo de 6 digitos, esse sim, merece o tratamento de cofre */
+.campo-codigo {
   width: 100%;
   padding: 15px;
   border-autenticador: 12px;
   border: 1px solid var(--borda);
   background: rgba(0, 0, 0, .3);
   color: var(--texto);
-  font-size: 22px;
+  font-size: 26px;
   text-align: center;
-  letter-spacing: 9px;
+  letter-spacing: 12px;
+  text-indent: 12px;   /* compensa o espaco que o letter-spacing poe no fim */
   font-family: inherit;
   margin-bottom: 16px;
 }
-.login-caixa input:focus { outline: 2px solid var(--roxo); }
-.login-caixa .botao { width: 100%; justify-content: center; }
+.campo-codigo:focus { outline: 2px solid var(--roxo); }
+
+.botao-google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 18px;
+  border-autenticador: 10px;
+  border: 1.25px solid var(--borda);
+  background: #fff;
+  color: #1f1f1f;
+  font-size: 14.5px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: filter .15s;
+}
+.botao-google:hover { filter: brightness(.94); color: #1f1f1f; }
+.botao-google svg { width: 19px; height: 19px; flex: none; }
+
+.login-ou {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 18px;
+  color: var(--texto-fraco);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+.login-ou::before,
+.login-ou::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--borda);
+}
+
+.login-link {
+  display: inline-block;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--texto-fraco);
+  border-bottom: 1px solid transparent;
+}
+.login-link:hover { color: var(--texto); border-bottom-color: var(--borda); }
+.login-reenviar { margin: 0; }
+.como-botao {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+}
+
+/* ---------------- usuários ---------------- */
+.forma-usuario {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 18px;
+}
+.forma-usuario .campo-texto { margin-bottom: 0; flex: 1 1 200px; width: auto; }
+.forma-usuario select.campo-texto { flex: 0 0 auto; min-width: 160px; }
+.forma-usuario .botao { flex: none; }
+
+.nota {
+  color: var(--texto-fraco);
+  font-size: 12.5px;
+  line-height: 1.55;
+  padding: 0 18px 16px;
+}
+section > .nota { padding: 10px 4px 0; }
+
+table.tabela-usuarios td { vertical-align: middle; }
+table.tabela-usuarios tr.revogado td { opacity: .5; }
+table.tabela-usuarios td.acoes,
+table.tabela-usuarios th.acoes { text-align: right; white-space: nowrap; }
+table.tabela-usuarios td.acoes form { display: inline-block; margin-left: 6px; }
+table.tabela-usuarios small.por { color: var(--texto-fraco); margin-left: 4px; }
+
+.etiqueta {
+  display: inline-block;
+  padding: 3px 9px;
+  border-autenticador: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  border: 1px solid var(--borda);
+  color: var(--texto-fraco);
+  white-space: nowrap;
+}
+.etiqueta.admin { background: rgba(94, 106, 210, .16); border-color: rgba(94, 106, 210, .45); color: var(--roxo-claro); }
+.etiqueta.ok { background: rgba(0, 255, 136, .1); border-color: rgba(0, 255, 136, .32); color: #B6FFDC; }
+.etiqueta.espera { background: rgba(255, 165, 0, .1); border-color: rgba(255, 165, 0, .35); color: #FFE0B0; }
+.etiqueta.perigo { background: rgba(255, 77, 77, .1); border-color: rgba(255, 77, 77, .35); color: #FFC2C2; }
+.etiqueta.voce { background: rgba(255, 255, 255, .06); margin-left: 6px; }
+
+button.mini {
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--borda);
+  border-autenticador: 8px;
+  color: var(--texto-fraco);
+  padding: 6px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+button.mini:hover { background: rgba(255, 255, 255, .1); color: var(--texto); }
+button.mini.perigo { color: #FFC2C2; border-color: rgba(255, 77, 77, .3); }
+button.mini.perigo:hover { background: rgba(255, 77, 77, .14); color: #fff; }
+
+@media (max-width: 700px) {
+  .forma-usuario { flex-direction: column; align-items: stretch; }
+  .forma-usuario .botao { justify-content: center; }
+  table.tabela-usuarios td.acoes { text-align: left; }
+  table.tabela-usuarios td.acoes form { margin: 3px 6px 3px 0; }
+}
 
 /* ---------------- rodapé ---------------- */
 .rodape {

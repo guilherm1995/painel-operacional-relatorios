@@ -1,21 +1,146 @@
 {% extends "base.html" %}
 {% block titulo %}Acesso — {{ titulo_site }}{% endblock %}
 
+{# o mesmo botao serve para identificar no login e para confirmar dispositivo #}
+{% macro botao_google(texto) %}
+  <a class="botao-google" href="/entrar/google?destino={{ destino|urlencode }}">
+    <svg viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2.5 24 .5 14.6.5 6.5 5.9 2.6 13.8l7.8 6c1.9-5.6 7.2-9.8 13.6-9.8z"/>
+      <path fill="#4285F4" d="M46.9 24.5c0-1.6-.1-3.2-.4-4.7H24v9h12.9c-.6 3-2.3 5.6-4.9 7.3l7.6 5.9c4.4-4.1 7.3-10.2 7.3-17.5z"/>
+      <path fill="#FBBC05" d="M10.4 28.2c-.5-1.4-.8-2.9-.8-4.4s.3-3 .8-4.4l-7.8-6C.9 16.6 0 20.2 0 23.8s.9 7.2 2.6 10.3l7.8-5.9z"/>
+      <path fill="#34A853" d="M24 47.5c6.2 0 11.5-2 15.3-5.6l-7.6-5.9c-2.1 1.4-4.8 2.3-7.7 2.3-6.4 0-11.7-4.2-13.6-9.8l-7.8 5.9C6.5 42.1 14.6 47.5 24 47.5z"/>
+    </svg>
+    {{ texto }}
+  </a>
+{% endmacro %}
+
 {% block corpo %}
 <div class="login-tela">
-  <form class="login-caixa" method="post" action="/entrar">
+  <div class="login-caixa">
     <img src="/static/logo.png" alt="OPERACIONAL TELECOM">
     <h1>{{ titulo_site }}</h1>
-    <p>Informe o PIN de acesso para continuar.</p>
 
-    {% if erro %}
-      <div class="aviso erro">{{ erro }}</div>
+    {% if erro %}<div class="aviso erro">{{ erro }}</div>{% endif %}
+    {% if aviso %}<div class="aviso ok">{{ aviso }}</div>{% endif %}
+
+    {# ---------------- e-mail e senha ---------------- #}
+    {% if etapa == 'senha' %}
+      <p>Informe suas credenciais para acessar o sistema.</p>
+
+      {% if google_aqui %}
+        {{ botao_google("Continuar com o Google") }}
+        <div class="login-ou"><span>ou</span></div>
+      {% endif %}
+
+      <form method="post" action="/entrar">
+        <input type="email" name="email" value="{{ email }}" placeholder="E-mail"
+               autocomplete="username" class="campo-texto" autofocus required>
+        <input type="password" name="senha" placeholder="Senha"
+               autocomplete="current-password" class="campo-texto" required>
+        <input type="hidden" name="destino" value="{{ destino }}">
+        <button class="botao" type="submit">Acessar</button>
+      </form>
+
+      <a class="login-link" href="/entrar/primeiro?destino={{ destino|urlencode }}">
+        Primeiro acesso ou recuperação de senha
+      </a>
+
+    {# ---------------- dispositivo novo: segunda prova ---------------- #}
+    {% elif etapa == 'navegador' %}
+      <p>Este dispositivo não foi reconhecido. Por medida de segurança, o acesso
+         de <strong>{{ email }}</strong> requer uma confirmação adicional.</p>
+
+      {% if google_aqui %}
+        {{ botao_google("Confirmar com o Google") }}
+        <div class="login-ou"><span>ou</span></div>
+      {% endif %}
+
+      <form method="post" action="/entrar/navegador">
+        <input type="hidden" name="destino" value="{{ destino }}">
+        <button class="botao" type="submit" {% if not smtp_ligado %}disabled{% endif %}>
+          Receber código por e-mail
+        </button>
+      </form>
+
+      {% if not smtp_ligado and not google_aqui %}
+        <div class="aviso erro">
+          Não há meio de confirmação disponível. Contate o administrador do sistema.
+        </div>
+      {% endif %}
+
+      <p class="nota">Concluída a confirmação, este dispositivo passará a ser
+         reconhecido e a senha será suficiente nos próximos acessos.</p>
+
+      <a class="login-link" href="/entrar?destino={{ destino|urlencode }}">Cancelar</a>
+
+    {# ---------------- solicitar o código ---------------- #}
+    {% elif etapa == 'primeiro' %}
+      <p>Informe o e-mail cadastrado. Um código de verificação será enviado
+         para o endereço informado.</p>
+
+      <form method="post" action="/entrar/primeiro">
+        <input type="email" name="email" value="{{ email }}" placeholder="E-mail"
+               autocomplete="username" class="campo-texto" autofocus required>
+        <input type="hidden" name="destino" value="{{ destino }}">
+        <button class="botao" type="submit" {% if not smtp_ligado %}disabled{% endif %}>
+          Solicitar código
+        </button>
+      </form>
+
+      {% if not smtp_ligado %}
+        <div class="aviso erro">
+          O envio de e-mail não está configurado. Contate o administrador do sistema.
+        </div>
+      {% endif %}
+
+      <a class="login-link" href="/entrar?destino={{ destino|urlencode }}">Voltar</a>
+
+    {# ---------------- validar o código ---------------- #}
+    {% elif etapa == 'codigo' %}
+      {% if motivo == 'navegador' %}
+        <p>Este dispositivo não foi reconhecido. Por medida de segurança,
+           informe o código de seis dígitos enviado para<br><strong>{{ email }}</strong>.
+           O código é válido por {{ validade_codigo }} minutos.</p>
+      {% else %}
+        <p>Informe o código de seis dígitos enviado para<br><strong>{{ email }}</strong>.
+           O código é válido por {{ validade_codigo }} minutos.</p>
+      {% endif %}
+
+      <form method="post" action="/entrar/codigo">
+        <input type="text" name="codigo" inputmode="numeric" pattern="[0-9]*"
+               maxlength="6" placeholder="000000" class="campo-codigo"
+               autocomplete="one-time-code" autofocus required>
+        <input type="hidden" name="destino" value="{{ destino }}">
+        <button class="botao" type="submit">Confirmar</button>
+      </form>
+
+      <form method="post" action="/entrar/codigo/reenviar" class="login-reenviar">
+        <input type="hidden" name="destino" value="{{ destino }}">
+        <button type="submit" class="login-link como-botao">Solicitar novo código</button>
+      </form>
+
+      {% if motivo == 'navegador' %}
+        <p class="nota">Este dispositivo passará a ser reconhecido após a
+           confirmação. O código somente é solicitado em dispositivos novos.</p>
+      {% endif %}
+
+    {# ---------------- definir a senha ---------------- #}
+    {% elif etapa == 'definir' %}
+      <p>Defina a senha de acesso de <strong>{{ email }}</strong>.</p>
+      <p class="nota">A senha deve conter no mínimo {{ minimo_senha }} caracteres,
+         incluindo letra maiúscula, letra minúscula, número e caractere especial.</p>
+
+      <form method="post" action="/entrar/senha">
+        <input type="password" name="senha" placeholder="Nova senha"
+               autocomplete="new-password" class="campo-texto"
+               minlength="{{ minimo_senha }}" autofocus required>
+        <input type="password" name="repetir" placeholder="Confirme a nova senha"
+               autocomplete="new-password" class="campo-texto"
+               minlength="{{ minimo_senha }}" required>
+        <input type="hidden" name="destino" value="{{ destino }}">
+        <button class="botao" type="submit">Salvar e acessar</button>
+      </form>
     {% endif %}
-
-    <input type="password" name="pin" inputmode="numeric" autocomplete="current-password"
-           placeholder="••••••" autofocus required>
-    <input type="hidden" name="destino" value="{{ destino }}">
-    <button class="botao" type="submit">Entrar</button>
-  </form>
+  </div>
 </div>
 {% endblock %}

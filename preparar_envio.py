@@ -41,7 +41,15 @@ IGNORAR = {"__pycache__", ".claude", ".git", ".venv", "node_modules"}
 
 # Arquivos que sao especificos desta maquina e o destino recria sozinho
 IGNORAR_ARQUIVOS = {
-    Path("config") / "python.txt",   # caminho do interpretador local
+    Path("config") / "python.txt",       # caminho do interpretador local
+    # O cadastro de quem entra no site: e-mails e hash de senha das pessoas
+    # desta instalacao. O destino nasce com o dele, a partir de
+    # 'usuarios_iniciais' no site.json.
+    Path("config") / "usuarios.json",
+    Path("config") / "usuarios.json.novo",
+    # Chave que assina os cookies de sessao. Quem a tem forja sessao de
+    # qualquer pessoa -- cada instalacao sorteia a sua no primeiro boot.
+    Path("config") / "chave_sessao",
 }
 
 # Fica de fora porque o destino gera sozinho, ou porque tem dado de cliente
@@ -63,22 +71,39 @@ def _limpa(pasta: Path) -> list[Path]:
             continue
         if relativo in IGNORAR_ARQUIVOS:
             continue
+        # copias de seguranca feitas antes de mexer em algo (site.json.bak-...,
+        # parametros.json.bak-20260812). Sao desta maquina e do momento em que
+        # foram feitas; no destino so confundem quem for editar o arquivo certo.
+        if ".bak" in caminho.name:
+            continue
         saida.append(caminho)
     return saida
 
 
 def _config_para_envio() -> str | None:
-    """site.json limpo do que é só desta máquina - pin, e os caminhos do bot e
-    do Operacional Database (são pastas de instalação que existem AQUI, não no
-    servidor de destino; deixar preenchido faz o instalador achar que já está
-    tudo certo e o site sobe silenciosamente sem achar bot nem garantias)."""
+    """site.json limpo do que não deve sair daqui.
+
+    Duas categorias:
+
+    - **Segredos**: a senha do SMTP e o segredo do cliente OAuth do Google. Um
+      .zip circula por pendrive e e-mail; credencial dentro dele é credencial
+      vazada.
+    - **Caminhos desta máquina**: as pastas do bot e do Operacional Database
+      existem AQUI, não no destino. Deixar preenchido faz o instalador achar
+      que já está tudo certo, e o site sobe sem achar bot nem garantias.
+    """
     arquivo = RAIZ / "config" / "site.json"
     if not arquivo.exists():
         return None
     dados = json.loads(arquivo.read_text(encoding="utf-8"))
-    dados["pin"] = ""
-    dados["pasta_bot"] = ""
-    dados["pasta_database"] = ""
+    # O google_client_id NAO entra nesta lista: ele e publico por construcao --
+    # aparece na barra de enderecos em todo login. Apagar so obrigaria a digitar
+    # 72 caracteres a mao no servidor, com chance de errar um.
+    for chave in ("smtp_senha", "google_client_secret",
+                  "pasta_bot", "pasta_database"):
+        if chave in dados:
+            dados[chave] = ""
+    dados.pop("pin", None)      # não existe mais; some se vier de um zip antigo
     return json.dumps(dados, ensure_ascii=False, indent=2)
 
 

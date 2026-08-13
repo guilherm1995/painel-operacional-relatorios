@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block titulo %}Usuários — {{ titulo_site }}{% endblock %}
+
+{% block corpo %}
+<main>
+  <div class="titulo-pagina">
+    <h1>Usuários</h1>
+    <span class="sub">controle de acesso ao sistema</span>
+  </div>
+
+  {% if erro %}<div class="aviso erro">{{ erro }}</div>{% endif %}
+  {% if aviso %}<div class="aviso ok">{{ aviso }}</div>{% endif %}
+
+  <section>
+    <h2>Cadastrar usuário</h2>
+    <div class="tabela-caixa">
+      <form method="post" action="/usuarios/novo" class="forma-usuario">
+        <input type="email" name="email" placeholder="E-mail" class="campo-texto" required>
+        <input type="text" name="nome" placeholder="Nome (opcional)" class="campo-texto">
+        <select name="papel" class="campo-texto">
+          <option value="padrao">Padrão</option>
+          <option value="admin">Administrador</option>
+        </select>
+        <button class="botao" type="submit">Cadastrar</button>
+      </form>
+      <p class="nota">
+        Não é necessário atribuir senha ao usuário. O acesso é realizado pela
+        conta Google ou pelo primeiro acesso, no qual o próprio usuário define
+        sua senha.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Usuários cadastrados</h2>
+    <div class="tabela-caixa rolagem">
+      <table class="tabela-usuarios">
+        <thead>
+          <tr>
+            <th>E-mail</th>
+            <th>Nome</th>
+            <th>Perfil</th>
+            <th>Situação</th>
+            <th>Último acesso</th>
+            <th class="acoes">Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in pessoas %}
+          <tr class="{{ 'revogado' if not p.ativo }}">
+            <td>
+              {{ p.email }}
+              {% if p.email == eu %}<span class="etiqueta voce">sua conta</span>{% endif %}
+            </td>
+            <td>{{ p.nome or '—' }}</td>
+            <td>
+              <span class="etiqueta {{ 'admin' if p.papel == 'admin' }}">
+                {{ 'Administrador' if p.papel == 'admin' else 'Padrão' }}
+              </span>
+            </td>
+            <td>
+              {% if not p.ativo %}
+                <span class="etiqueta perigo">Revogado</span>
+              {% elif p.tem_senha %}
+                <span class="etiqueta ok">Ativo</span>
+              {% else %}
+                <span class="etiqueta espera">Senha pendente</span>
+              {% endif %}
+            </td>
+            <td>
+              {{ p.ultimo_acesso or '—' }}
+              {% if p.entrou_por %}<small class="por">({{ p.entrou_por }})</small>{% endif %}
+            </td>
+            <td class="acoes">
+              {% if p.email != eu %}
+                {% if p.ativo %}
+                <form method="post" action="/usuarios/ativo">
+                  <input type="hidden" name="email" value="{{ p.email }}">
+                  <input type="hidden" name="ativo" value="0">
+                  <button type="submit" class="mini perigo">Revogar</button>
+                </form>
+                {% else %}
+                <form method="post" action="/usuarios/ativo">
+                  <input type="hidden" name="email" value="{{ p.email }}">
+                  <input type="hidden" name="ativo" value="1">
+                  <button type="submit" class="mini">Reativar</button>
+                </form>
+                {% endif %}
+
+                <form method="post" action="/usuarios/papel">
+                  <input type="hidden" name="email" value="{{ p.email }}">
+                  <input type="hidden" name="papel"
+                         value="{{ 'padrao' if p.papel == 'admin' else 'admin' }}">
+                  <button type="submit" class="mini">
+                    {{ 'Remover administração' if p.papel == 'admin' else 'Conceder administração' }}
+                  </button>
+                </form>
+              {% endif %}
+
+              {% if p.tem_senha %}
+              <form method="post" action="/usuarios/senha">
+                <input type="hidden" name="email" value="{{ p.email }}">
+                <button type="submit" class="mini">Redefinir senha</button>
+              </form>
+              {% endif %}
+
+              {% if p.email != eu %}
+              <form method="post" action="/usuarios/apagar"
+                    onsubmit="return confirm('Confirma a exclusão de {{ p.email }} do cadastro?')">
+                <input type="hidden" name="email" value="{{ p.email }}">
+                <button type="submit" class="mini perigo">Excluir</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="vazio">Nenhum usuário cadastrado.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="nota">
+      A revogação tem efeito imediato: a sessão do usuário é encerrada na
+      requisição seguinte, sem aguardar o vencimento do prazo.
+    </p>
+  </section>
+</main>
+{% endblock %}

@@ -2,10 +2,11 @@
 
 Feito para ser executado na maquina que vai hospedar (inclusive por acesso
 remoto): confere o Python, instala as dependencias, valida os caminhos dos
-outros projetos, define o PIN e testa se tudo funciona de ponta a ponta.
+outros projetos, define o administrador do site e testa se tudo funciona de
+ponta a ponta.
 
     python instalar.py                     # instala e testa
-    python instalar.py --pin 123456        # ja define o PIN
+    python instalar.py --admin operador@provedor.example   # primeiro administrador
     python instalar.py --porta 8800
     python instalar.py --bot "D:/campo_bot_telegram" --database "D:/painel_desktop_operacao.py"
     python instalar.py --auto-start        # sobe junto com o Windows
@@ -239,24 +240,27 @@ def conferir_caminhos(bot: str | None, database: str | None,
         ok("caminhos gravados em config/site.json")
 
 
-def configurar_site(pin: str | None, porta: int | None,
+def configurar_site(admin: str | None, porta: int | None,
                     somente_conferir: bool) -> dict:
     titulo("5. Configuração do site")
     dados = json.loads(CONFIG_SITE.read_text(encoding="utf-8")) if CONFIG_SITE.exists() else {}
 
-    if pin:
-        if not (pin.isdigit() and 4 <= len(pin) <= 12):
-            erro("o PIN precisa ter de 4 a 12 dígitos")
-        else:
-            dados["pin"] = pin
-    elif not str(dados.get("pin") or "").strip():
-        if somente_conferir:
-            # em modo conferir nada e gravado, entao nao da para prometer um PIN:
-            # quem sorteia e grava e o primeiro boot do site
-            print("  PIN: nenhum definido — será sorteado ao subir o site")
-        else:
-            dados["pin"] = f"{secrets.randbelow(900000) + 100000}"
-            print("  PIN sorteado (nenhum estava definido)")
+    # O PIN único saiu: quem entra é gente cadastrada, por e-mail. O instalador
+    # só precisa garantir que exista ao menos um administrador na semente --
+    # sem isso a instalação sobe sem ninguém capaz de cadastrar os demais.
+    iniciais = dict(dados.get("usuarios_iniciais") or {})
+    if admin:
+        iniciais[admin.strip().lower()] = "admin"
+        dados["usuarios_iniciais"] = iniciais
+    if not any(papel == "admin" for papel in iniciais.values()):
+        erro("nenhum administrador definido — rode de novo com "
+             "--admin operador@provedor.example")
+    else:
+        quem = ", ".join(e for e, p in iniciais.items() if p == "admin")
+        print(f"  administrador(es): {quem}")
+        outros = [e for e, p in iniciais.items() if p != "admin"]
+        if outros:
+            print(f"  demais usuários:   {', '.join(outros)}")
 
     if porta:
         dados["porta"] = int(porta)
@@ -267,8 +271,6 @@ def configurar_site(pin: str | None, porta: int | None,
                                encoding="utf-8")
 
     print(f"  porta: {dados.get('porta', 8800)}")
-    if dados.get("pin"):
-        print(f"  PIN:   {dados['pin']}")
     ok("configuração pronta")
     return dados
 
@@ -345,8 +347,8 @@ def testar(somente_conferir: bool) -> None:
     if str(RAIZ) not in sys.path:
         sys.path.insert(0, str(RAIZ))
     if somente_conferir:
-        # importar o site dispara o sorteio de PIN do primeiro boot; em modo
-        # conferir isso nao pode virar escrita em disco
+        # importar o site cria o cadastro inicial de usuarios; em modo conferir
+        # isso nao pode virar escrita em disco
         os.environ["OPERACIONAL_CONFIG_SOMENTE_LEITURA"] = "1"
 
     try:
@@ -395,7 +397,8 @@ def registrar_auto_start(porta: int) -> None:
 # --------------------------------------------------------------------------
 def main() -> int:
     p = argparse.ArgumentParser(description="Prepara esta máquina para o painel OPERACIONAL.")
-    p.add_argument("--pin", help="PIN de acesso ao site (4 a 12 dígitos)")
+    p.add_argument("--admin", metavar="EMAIL",
+                   help="e-mail do primeiro administrador do site")
     p.add_argument("--porta", type=int, help="porta local do site")
     p.add_argument("--bot", help="pasta do bot de monitoramento")
     p.add_argument("--database", help="pasta do Operacional Database")
@@ -420,7 +423,7 @@ def main() -> int:
     instalar_dependencias(args.conferir)
     instalar_navegador(args.conferir)
     conferir_caminhos(args.bot, args.database, args.conferir)
-    dados = configurar_site(args.pin, args.porta, args.conferir)
+    dados = configurar_site(args.admin, args.porta, args.conferir)
     conferir_tunel()
     testar(args.conferir)
 
@@ -431,8 +434,8 @@ def main() -> int:
     if args.auto_start and not args.conferir:
         registrar_auto_start(int(dados.get("porta", 8800)))
 
-    # o autoteste importa o site, que pode ter sorteado e gravado um PIN proprio -
-    # entao o resumo le o arquivo de novo, para nao anunciar um PIN que nao vale
+    # o autoteste importa o site, que pode ter gravado no config (o cadastro
+    # inicial nasce ai) - entao o resumo le o arquivo de novo
     dados = ler_config() or dados
 
     print("\n" + "=" * 66)
@@ -448,9 +451,13 @@ def main() -> int:
         print(f"\n  {len(avisos)} aviso(s) que não impedem o site de rodar:")
         for a in avisos:
             print(f"    - {a}")
+    admins = [e for e, p in (dados.get("usuarios_iniciais") or {}).items()
+              if p == "admin"]
     print(f"\n  Para subir:  clique em 'INICIAR SITE.bat'")
-    print(f"  PIN:         {dados.get('pin') or '(será mostrado ao subir o site)'}")
     print(f"  Porta:       {dados.get('porta', 8800)}")
+    print(f"  Administra:  {', '.join(admins) or '(nenhum definido)'}")
+    print("  Acesso:      cada pessoa entra com o próprio e-mail. No primeiro")
+    print("               acesso o site envia um código para criar a senha.")
     print("=" * 66)
     return 0
 
