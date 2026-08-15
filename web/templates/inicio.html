@@ -47,6 +47,7 @@
         <div class="valor">{{ "{:,}".format(est.os_analisadas_hoje).replace(",", ".") }}</div>
         <div class="nota">desde o início da contagem</div>
       </div>
+      {% if sou_admin %}
       <div class="carta {{ 'vermelho' if est.erros_log_hoje else 'verde' }}">
         <div class="rotulo">Erros no log</div>
         <div class="valor">{{ est.erros_log_hoje }}</div>
@@ -55,6 +56,23 @@
           {{ 'bot ativo' if bot.rodando else 'bot parado' }} · {{ bot.log_em or 'sem log' }}
         </div>
       </div>
+      {% else %}
+      {# Contagem de erro é diagnóstico de quem administra: para quem opera ela
+         só produz alarme sem ação possível -- "12 erros" não diz se algum deles
+         atrapalhou o número que a pessoa veio ver.
+
+         O SINAL DE VIDA FICA, e no lugar dela: esse muda o que se faz. Bot
+         parado quer dizer que todos os números desta tela estão velhos, e quem
+         opera precisa saber disso sem depender de administrador. #}
+      <div class="carta {{ 'verde' if bot.rodando else 'vermelho' }}">
+        <div class="rotulo">Bot de monitoramento</div>
+        <div class="valor">{{ 'ativo' if bot.rodando else 'parado' }}</div>
+        <div class="nota">
+          <span class="pulso {{ 'on' if bot.rodando else 'off' }}"></span>
+          {{ bot.log_em or 'sem log' }}
+        </div>
+      </div>
+      {% endif %}
     </div>
     {% else %}
       <div class="aviso alerta">

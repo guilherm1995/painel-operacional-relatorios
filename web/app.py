@@ -822,6 +822,14 @@ def ver_backlog(request: Request):
     for img in imagens:
         por_regiao.setdefault(img["regiao"], []).append(img)
 
+    # O log ao vivo é a linha CRUA do bot: ali passam nome de cliente e número
+    # de contrato ("Notificada: OS ... (RAZÃO SOCIAL)") e o caminho dos arquivos
+    # no servidor. É diagnóstico de quem administra, não informação de operação
+    # -- quem usa a tela de backlog quer as imagens e os números.
+    #
+    # Não basta esconder no template: o /backlog/log também recusa (ver lá).
+    sou_admin = acesso.e_admin(request.session.get("email", ""))
+
     return _render(request, "backlog.html", "backlog",
         imagens=imagens,
         imagens_por_regiao=por_regiao,
@@ -831,7 +839,9 @@ def ver_backlog(request: Request):
         est=backlog.estatisticas(),
         entrantes=backlog.entrantes(),
         bot=backlog.bot_ativo(),
-        log=backlog.log(),
+        # Nem lê o arquivo quando não é admin: o template esconde, mas o valor
+        # ainda teria passado pelo contexto da página.
+        log=backlog.log() if sou_admin else [],
         # O OFS GERAL alimenta o "Enviado D0" do backlog, então a idade dele
         # aparece aqui também — se estiver velho, a contagem sai menor que a real.
         arquivos=planilhas.status_arquivos("backlog"),
@@ -878,9 +888,19 @@ def estado_backlog(request: Request):
 
 @app.get("/backlog/log")
 def log_backlog(request: Request):
-    """Usado pelo auto-refresh do log na tela de backlog."""
+    """Usado pelo auto-refresh do log na tela de backlog. SÓ ADMIN.
+
+    Aqui a checagem é explícita em vez de `_so_admin`: aquele devolve uma
+    PÁGINA de erro, e quem chama isto é um fetch() esperando JSON -- a tela
+    tentaria ler HTML como se fosse a lista de linhas.
+
+    Esconder a seção no template não basta: o endpoint continua respondendo a
+    quem digitar a URL. É esta linha que fecha, não a do template.
+    """
     if not _autenticado(request):
         return JSONResponse({"linhas": []}, status_code=401)
+    if not acesso.e_admin(request.session.get("email", "")):
+        return JSONResponse({"linhas": []}, status_code=403)
     return {"linhas": backlog.log()}
 
 

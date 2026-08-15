@@ -86,10 +86,14 @@
         <div class="valor">{{ entrantes.total }}</div>
         <div class="nota">{{ entrantes.linhas|length }} unidades</div>
       </div>
+      {# Mesmo critério do cartão da Visão geral: contagem de erro é de quem
+         administra. Aqui não há sinal de vida junto para preservar. #}
+      {% if sou_admin %}
       <div class="carta {{ 'vermelho' if est.erros_log_hoje else 'verde' }}">
         <div class="rotulo">Erros no log hoje</div>
         <div class="valor">{{ est.erros_log_hoje }}</div>
       </div>
+      {% endif %}
     </div>
   </section>
   {% endif %}
@@ -212,6 +216,13 @@
   })();
   </script>
 
+  {# O log ao vivo é a linha CRUA do bot: passam ali nome de cliente e número
+     de contrato ("Notificada: OS ... (RAZÃO SOCIAL)") e caminhos do servidor.
+
+     Esconder aqui também DESLIGA o auto-refresh sozinho: o app.js só liga o
+     polling se achar o elemento #log. E o /backlog/log recusa por conta
+     própria, para quem digitar a URL. #}
+  {% if sou_admin %}
   <section>
     <h2>Log do bot ao vivo</h2>
     <div class="log" id="log">
@@ -221,5 +232,6 @@
       {% if not log %}<div class="linha">Log não encontrado em {{ caminho_log }}.</div>{% endif %}
     </div>
   </section>
+  {% endif %}
 </main>
 {% endblock %}
