@@ -144,7 +144,13 @@ def _resumo(caminho: Path) -> str:
     if guardado and guardado[0] == assinatura:
         return guardado[1]
 
-    digestor = hashlib.sha1()
+    # usedforsecurity=False: isto aqui e um "as duas copias sao iguais?", nao
+    # uma assinatura. Ninguem confia no resumo para autenticar nada, e nao ha
+    # adversario escolhendo o conteudo do arquivo -- so o extrator, gravando o
+    # que leu. O sinalizador nao muda o resultado; ele diz isso a quem le, e
+    # cala o alerta de SHA1 do Bandit sem precisar de um "# nosec" que
+    # silenciaria a linha inteira, inclusive um problema futuro de verdade.
+    digestor = hashlib.sha1(usedforsecurity=False)
     try:
         with caminho.open("rb") as arquivo:
             for bloco in iter(lambda: arquivo.read(1 << 20), b""):

@@ -11,7 +11,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
@@ -58,6 +58,168 @@ app.mount("/static", StaticFiles(directory=AQUI / "static"), name="static")
 paginas = Jinja2Templates(directory=str(AQUI / "templates"))
 
 
+# --------------------------------------------------------------------------
+# guarda: cabeçalhos de segurança, nonce da CSP e conferência de origem
+# --------------------------------------------------------------------------
+guarda_log = logging.getLogger("operacional.guarda")
+
+METODOS_QUE_MUDAM = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+# `script-src` sai preso ao nonce do pedido: script injetado numa página nossa
+# não roda sem ele, mesmo que consiga entrar no HTML. Os 5 blocos <script>
+# embutidos nos templates carregam o nonce e continuam funcionando.
+#
+# `style-src` fica com 'unsafe-inline' de propósito. Há 36 atributos style= nos
+# templates e boa parte é largura calculada ("width: {{ ... }}%") -- é para isso
+# que eles existem. Trocar tudo por variável CSS às vésperas da migração seria
+# risco de quebrar tela sem ganho proporcional: quem executa código é script, e
+# esse está preso. Vale rever com calma depois.
+_CSP = (
+    "default-src 'self'; "
+    "base-uri 'none'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'self'; "
+    "img-src 'self' data:; "
+    "font-src 'self'; "
+    "media-src 'self'; "
+    "connect-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'nonce-{nonce}'"
+)
+
+
+def _origens_aceitas(request: Request) -> set[str]:
+    """Os endereços pelos quais este site legitimamente se enxerga.
+
+    Entram os dois: o Host que o proxy repassou e o `endereco_publico`
+    configurado. Durante a migração o site atende ao mesmo tempo pelo domínio
+    novo e pelo endereço antigo, e recusar um dos dois derrubaria metade dos
+    formulários no pior momento possível.
+    """
+    aceitas: set[str] = set()
+    host = (request.headers.get("host") or "").strip()
+    if host:
+        aceitas.add(f"https://{host}")
+        aceitas.add(f"http://{host}")
+    publico = str(CONFIG.endereco_publico or "").strip().rstrip("/")
+    if publico:
+        partes = urlsplit(publico)
+        if partes.scheme and partes.netloc:
+            aceitas.add(f"{partes.scheme}://{partes.netloc}")
+    return aceitas
+
+
+@app.middleware("http")
+async def guarda(request: Request, seguir):
+    """Confere a origem dos pedidos que mudam estado e assina toda resposta.
+
+    Sobre a origem: um formulário hospedado em outro site que faça POST aqui
+    manda `Origin` com o endereço DELE -- o navegador escreve esse cabeçalho e
+    a página não consegue mentir sobre ele. Então basta exigir que, quando vier,
+    ele seja um endereço nosso.
+
+    Quando não vem, é pedido de mesma origem ou cliente que não é navegador --
+    e não é por aí que o ataque entra, porque POST entre sites SEMPRE carrega
+    `Origin`. Por isso a ausência passa em vez de barrar: barrar ali só quebraria
+    cliente legítimo sem fechar caminho nenhum.
+
+    Isto soma ao `SameSite=lax` do cookie, que já impede o cookie de viajar num
+    POST vindo de fora. São duas camadas independentes: uma no cookie, outra no
+    cabeçalho.
+    """
+    if request.method in METODOS_QUE_MUDAM:
+        origem = (request.headers.get("origin") or "").strip()
+        if not origem:
+            # Referer como segunda opção: navegador antigo às vezes omite o
+            # Origin em POST de mesma origem, mas manda o Referer.
+            ref = (request.headers.get("referer") or "").strip()
+            if ref:
+                partes = urlsplit(ref)
+                if partes.scheme and partes.netloc:
+                    origem = f"{partes.scheme}://{partes.netloc}"
+        if origem and origem not in _origens_aceitas(request):
+            guarda_log.warning("POST recusado por origem estranha: %r em %s",
+                               origem, request.url.path)
+            return JSONResponse(
+                {"ok": False, "erro": "Origem não autorizada."}, status_code=403)
+
+    # Um nonce novo por pedido. Guardar no request.state é o que deixa o
+    # _render entregá-lo ao template sem passar por todas as rotas.
+    nonce = secrets.token_urlsafe(16)
+    request.state.csp_nonce = nonce
+
+    resposta = await seguir(request)
+
+    resposta.headers["Content-Security-Policy"] = _CSP.format(nonce=nonce)
+    resposta.headers["X-Content-Type-Options"] = "nosniff"
+    resposta.headers["X-Frame-Options"] = "DENY"
+    resposta.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    resposta.headers["Permissions-Policy"] = (
+        "geolocation=(), camera=(), microphone=(), payment=(), usb=()")
+    resposta.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    # Anunciar HTTPS obrigatório só depois que o site for HTTPS de verdade:
+    # ligar antes trancaria o acesso pela rede local, que ainda é HTTP puro. O
+    # cookie_seguro é exatamente o sinal de "já não há caminho em claro".
+    if CONFIG.cookie_seguro:
+        resposta.headers["Strict-Transport-Security"] = \
+            "max-age=31536000; includeSubDomains"
+    # não entregar a versão do servidor de graça
+    resposta.headers["Server"] = "-"
+    return resposta
+
+
+logger = logging.getLogger("operacional.site")
+
+# --- token de uso da tela de usuários --------------------------------------
+# A conferência de origem no `guarda` já cobre todo POST, e o SameSite=lax do
+# cookie cobre de novo. O token entra SÓ aqui, e de propósito: /usuarios apaga
+# conta e revoga acesso, e é o único lugar onde um erro nosso seria
+# irreversível. Nas outras telas ele custaria mexer no fluxo de login e no
+# app.js sem somar defesa que as duas primeiras camadas já não deem.
+CAMPO_CSRF = "csrf"
+
+# Quais telas recebem o token. Lista, e não "toda tela": ver `_render`. Se um
+# template novo passar a ter formulário de ação destrutiva, o nome dele entra
+# aqui. Esquecer disso quebraria CALADO -- o `{{ csrf }}` renderiza vazio e a
+# ação responde 403 sem explicação. Por isso o `ensaio_csrf` compara este
+# conjunto com os templates que de fato pedem o campo, nos dois sentidos.
+TELAS_COM_CSRF = {"usuarios.html"}
+
+
+def _csrf(request: Request) -> str:
+    """Token desta sessão, criado na primeira tela que precisar dele."""
+    token = request.session.get(CAMPO_CSRF)
+    if not token:
+        token = secrets.token_urlsafe(32)
+        request.session[CAMPO_CSRF] = token
+    return token
+
+
+def _csrf_confere(request: Request, enviado: str) -> bool:
+    guardado = request.session.get(CAMPO_CSRF) or ""
+    return bool(guardado) and secrets.compare_digest(str(enviado or ""), guardado)
+
+
+def _erro_para_tela(falha: Exception, onde: str) -> str:
+    """Mensagem segura para a tela; o detalhe vai para o log.
+
+    `ValueError` é o que o nosso próprio código levanta para conversar com a
+    pessoa -- "Formato .txt não aceito", "O arquivo chegou vazio", "Arquivo de
+    80 MB". Essa passa inteira, porque é justamente a informação que resolve.
+
+    Qualquer outra exceção é defeito, e o texto dela costuma trazer caminho
+    absoluto do servidor ou estrutura interna (um FileNotFoundError entrega a
+    árvore de pastas inteira). Essa vira mensagem genérica na tela e detalhe
+    completo no log, onde serve para diagnóstico sem servir de mapa.
+    """
+    if isinstance(falha, ValueError) and str(falha):
+        return str(falha)
+    logger.exception("falha em %s", onde)
+    return ("Não foi possível concluir a operação. O detalhe ficou registrado "
+            "no log do servidor.")
+
+
 def _render(request: Request, template: str, pagina: str, status_code: int = 200, **extra):
     """Renderiza um template com o contexto que todas as telas precisam."""
     contexto = {
@@ -73,8 +235,21 @@ def _render(request: Request, template: str, pagina: str, status_code: int = 200
         "versao_estatica": VERSAO_ESTATICA,
         "usuario": request.session.get("nome") or request.session.get("email") or "",
         "sou_admin": acesso.e_admin(request.session.get("email", "")),
+        # nonce da CSP: os <script> embutidos nos templates precisam carregá-lo,
+        # senão o navegador se recusa a executá-los (ver o middleware `guarda`)
+        "nonce": getattr(request.state, "csp_nonce", ""),
         **extra,
     }
+    # O token CSRF é criado SÓ na tela que o usa. Ele estava aqui para toda
+    # tela, e gravá-lo faz o Starlette responder com Set-Cookie: quem apenas
+    # abria /entrar, sem se identificar, já saía com cookie de sessão. Isso é
+    # marcar visitante anônimo sem necessidade nenhuma -- o token só existe
+    # para as ações de /usuarios, que exigem estar logado como administrador.
+    #
+    # Continua sendo criado aqui, e não na rota, para que a tela de ações
+    # destrutivas não dependa de alguém lembrar de passá-lo.
+    if template in TELAS_COM_CSRF:
+        contexto.setdefault("csrf", _csrf(request))
     return paginas.TemplateResponse(request, template, contexto, status_code=status_code)
 
 
@@ -233,6 +408,43 @@ def tela_login(request: Request, destino: str = "/", erro: str = ""):
     destino = _destino_seguro(destino)
     if _autenticado(request):
         return RedirectResponse(destino, status_code=303)
+
+    # Quem chega pelo endereco publico ja foi identificado pelo Cloudflare
+    # Access ANTES de este pedido existir: a borda so encaminha depois de a
+    # pessoa provar que a caixa de e-mail e dela. Pedir senha aqui seria pedir
+    # uma segunda prova de identidade a quem acabou de dar a primeira.
+    #
+    # Isto so e seguro porque o Funnel foi desligado: desde entao o unico
+    # caminho ate 127.0.0.1:8800 e o cloudflared, que so entrega o que passou
+    # pela borda. Logo o cabecalho so pode ter vindo de la -- mesmo argumento
+    # do CF-Connecting-IP. Se algum dia outro proxy local voltar a servir este
+    # site, ESTA linha volta a ser um buraco: identidade sem prova.
+    #
+    # A senha continua no codigo de proposito, como porta de emergencia. Quem
+    # chega por dentro (SSH pela tailnet, tunel ate a porta local) nao traz
+    # identidade do Access e cai na tela normal -- e e isso que impede que um
+    # problema na Cloudflare tranque todo mundo do lado de fora.
+    #
+    # O cadastro do OPERACIONAL continua mandando em QUEM pode e em O QUE pode: o
+    # Access diz o nome, autorizado() diz se esta ativo, e_admin() diz o papel.
+    quem = acesso.identidade_do_access(request)
+    if quem and acesso.autorizado(quem):
+        ip = acesso.ip_do_pedido(request)
+        nome = acesso.USUARIOS.buscar(quem).get("nome", "")
+        porteiro.info("entrada direta pelo Access: %s (%s)", quem, ip)
+        return _abrir_sessao(request, quem, nome, "Cloudflare Access", ip, destino)
+
+    if quem:
+        # Passou pelo Access, mas nao esta no cadastro daqui -- ou foi revogada.
+        # Cair na tela de senha sem explicacao mandava a pessoa tentar uma senha
+        # que nunca ia resolver, porque o problema nao e a senha dela. Dizer o
+        # que aconteceu poupa ela e poupa quem administra.
+        porteiro.warning("identificada pelo Access, sem acesso no OPERACIONAL: %s", quem)
+        return _tela(request, "senha", destino, status_code=403,
+                     erro=f"O e-mail {quem} foi verificado pela Cloudflare, mas "
+                          "não tem acesso liberado neste sistema. Procure um "
+                          "administrador.")
+
     return _tela(request, "senha", destino, erro=erro or None)
 
 
@@ -268,6 +480,17 @@ def fazer_login(request: Request, email: str = Form(""), senha: str = Form(""),
         # desenho de uma senha vazada: quem rouba tenta do computador dele.
         # Antes de abrir, exigimos a prova de que a caixa de e-mail tambem e
         # desta pessoa.
+        #
+        # ...a menos que ela ja tenha sido feita. Quem chega pelo endereco
+        # publico passou antes pelo Cloudflare Access, que manda um codigo
+        # para a caixa e espera o acerto -- a MESMA prova, so que na borda e
+        # sem depender de nos entregarmos e-mail. Pedir de novo aqui seria
+        # cobrar duas vezes a mesma coisa. A senha continua sendo exigida.
+        if acesso.identidade_do_access(request) == email:
+            porteiro.info("dispositivo novo liberado pelo Access: %s (%s)", email, ip)
+            return _abrir_sessao(request, email, nome, "senha e Cloudflare Access",
+                                 ip, destino)
+
         porteiro.info("navegador desconhecido para %s (%s)", email, ip)
         request.session.clear()
         request.session["pendente_email"] = email
@@ -573,8 +796,23 @@ def retorno_do_google(request: Request, code: str = "", state: str = "", error: 
 @app.get("/sair")
 def sair(request: Request):
     quem = request.session.get("email") or request.session.get("nome") or "?"
+    # Precisa ser lido ANTES de limpar a sessao: e o cabecalho do pedido que
+    # diz por onde a pessoa entrou.
+    pelo_access = bool(acesso.identidade_do_access(request))
     request.session.clear()
-    porteiro.info("saiu: %s", quem)
+    porteiro.info("saiu: %s%s", quem, " (encerrando tambem o Access)" if pelo_access else "")
+
+    if pelo_access:
+        # Limpar so a sessao daqui nao encerrava nada: o /entrar reconhecia a
+        # identidade do Access e reabria tudo no mesmo instante. O botao
+        # parecia funcionar e devolvia a pessoa para dentro -- que num
+        # computador compartilhado e pior do que nao ter botao, porque ela sai
+        # confiando que saiu. Quem tem de cair e a sessao da borda, e a
+        # Cloudflare a encerra por este caminho, no proprio dominio do
+        # aplicativo (sem precisar do nome da equipe aqui).
+        return RedirectResponse("/cdn-cgi/access/logout", status_code=303)
+
+    # Entrou por dentro, com senha: nao ha sessao de borda para encerrar.
     return RedirectResponse("/entrar", status_code=303)
 
 
@@ -606,10 +844,21 @@ def ver_usuarios(request: Request):
     return _tela_usuarios(request)
 
 
-def _mexer_no_cadastro(request: Request, acao, sucesso: str):
-    """Casca comum das ações: valida admin, executa e devolve a tela de novo."""
+def _mexer_no_cadastro(request: Request, acao, sucesso: str, csrf: str = ""):
+    """Casca comum: valida admin, confere o token, executa, devolve a tela.
+
+    O token é conferido aqui e não em cada rota justamente para não depender de
+    alguém lembrar: qualquer ação nova que passe por esta casca já nasce
+    conferida.
+    """
     if recusa := _so_admin(request):
         return recusa
+    if not _csrf_confere(request, csrf):
+        porteiro.warning("token de tela inválido em %s (%s)",
+                         request.url.path, request.session.get("email"))
+        return _tela_usuarios(
+            request, status_code=403,
+            erro="A página expirou. Recarregue e tente novamente.")
     try:
         acao()
     except (ValueError, acesso.SemAdmin) as falha:
@@ -625,7 +874,7 @@ def _mexer_no_cadastro(request: Request, acao, sucesso: str):
 
 @app.post("/usuarios/novo", response_class=HTMLResponse)
 def usuario_novo(request: Request, email: str = Form(""), nome: str = Form(""),
-                 papel: str = Form(acesso.PADRAO)):
+                 papel: str = Form(acesso.PADRAO), csrf: str = Form("")):
     email = acesso.normalizar_email(email)
     if "@" not in email or "." not in email.split("@")[-1]:
         if recusa := _so_admin(request):
@@ -637,11 +886,12 @@ def usuario_novo(request: Request, email: str = Form(""), nome: str = Form(""),
         request,
         lambda: acesso.USUARIOS.criar(email, nome, papel, quem),
         f"Usuário {email} cadastrado. A senha será definida pelo próprio "
-        f"usuário no primeiro acesso.")
+        f"usuário no primeiro acesso.", csrf)
 
 
 @app.post("/usuarios/papel", response_class=HTMLResponse)
-def usuario_papel(request: Request, email: str = Form(""), papel: str = Form(acesso.PADRAO)):
+def usuario_papel(request: Request, email: str = Form(""),
+                  papel: str = Form(acesso.PADRAO), csrf: str = Form("")):
     email = acesso.normalizar_email(email)
     eu = acesso.normalizar_email(request.session.get("email", ""))
     if email == eu and papel != acesso.ADMIN:
@@ -655,11 +905,12 @@ def usuario_papel(request: Request, email: str = Form(""), papel: str = Form(ace
     return _mexer_no_cadastro(
         request,
         lambda: acesso.USUARIOS.definir_papel(email, papel),
-        f"O perfil de {email} foi alterado para {nome_papel}.")
+        f"O perfil de {email} foi alterado para {nome_papel}.", csrf)
 
 
 @app.post("/usuarios/ativo", response_class=HTMLResponse)
-def usuario_ativo(request: Request, email: str = Form(""), ativo: str = Form("")):
+def usuario_ativo(request: Request, email: str = Form(""), ativo: str = Form(""),
+                  csrf: str = Form("")):
     email = acesso.normalizar_email(email)
     eu = acesso.normalizar_email(request.session.get("email", ""))
     ligar = str(ativo).strip() == "1"
@@ -671,21 +922,21 @@ def usuario_ativo(request: Request, email: str = Form(""), ativo: str = Form("")
     return _mexer_no_cadastro(
         request,
         lambda: acesso.USUARIOS.definir_ativo(email, ligar),
-        f"O acesso de {email} foi {'reativado' if ligar else 'revogado'}.")
+        f"O acesso de {email} foi {'reativado' if ligar else 'revogado'}.", csrf)
 
 
 @app.post("/usuarios/senha", response_class=HTMLResponse)
-def usuario_senha(request: Request, email: str = Form("")):
+def usuario_senha(request: Request, email: str = Form(""), csrf: str = Form("")):
     email = acesso.normalizar_email(email)
     return _mexer_no_cadastro(
         request,
         lambda: acesso.USUARIOS.esquecer_senha(email),
         f"A senha de {email} foi removida. O usuário deverá defini-la "
-        f"novamente pelo primeiro acesso.")
+        f"novamente pelo primeiro acesso.", csrf)
 
 
 @app.post("/usuarios/apagar", response_class=HTMLResponse)
-def usuario_apagar(request: Request, email: str = Form("")):
+def usuario_apagar(request: Request, email: str = Form(""), csrf: str = Form("")):
     email = acesso.normalizar_email(email)
     eu = acesso.normalizar_email(request.session.get("email", ""))
     if email == eu:
@@ -696,7 +947,7 @@ def usuario_apagar(request: Request, email: str = Form("")):
     return _mexer_no_cadastro(
         request,
         lambda: acesso.USUARIOS.apagar(email),
-        f"O usuário {email} foi excluído do cadastro.")
+        f"O usuário {email} foi excluído do cadastro.", csrf)
 
 
 # --------------------------------------------------------------------------
@@ -752,7 +1003,7 @@ async def salvar_configuracao_painel(request: Request):
         mensagem = "Configuração salva."
     except Exception as falha:
         mensagem = ""
-        erro = str(falha) or f"Falha ao salvar: {type(falha).__name__}"
+        erro = _erro_para_tela(falha, "salvar a configuração do painel")
 
     return RedirectResponse(
         f"/painel?config_salva={quote(mensagem)}&config_erro={quote(erro)}", status_code=303
@@ -786,7 +1037,7 @@ async def gerar_painel(request: Request, extracao: UploadFile | None = None):
         with ThreadPoolExecutor(max_workers=1) as executor:
             resultado = await loop.run_in_executor(executor, painel.gerar, caminho)
     except Exception as falha:
-        erro = str(falha) or f"Falha ao gerar: {type(falha).__name__}"
+        erro = _erro_para_tela(falha, "gerar o painel")
 
     return _render(request, "painel.html", "painel",
                    telas=painel.listar(),
@@ -846,8 +1097,11 @@ def ver_backlog(request: Request):
         # aparece aqui também — se estiver velho, a contagem sai menor que a real.
         arquivos=planilhas.status_arquivos("backlog"),
         ofs=backlog.status_ofs_do_backlog(),
-        pasta_relatorios=str(CONFIG.relatorios_bot),
-        caminho_log=str(CONFIG.log_bot))
+        # Caminho do servidor é diagnóstico de quem administra. O template já
+        # esconde, mas nem passar pelo contexto é mais honesto -- e é o mesmo
+        # tratamento que o `log` acima recebe.
+        pasta_relatorios=str(CONFIG.relatorios_bot) if sou_admin else "",
+        caminho_log=str(CONFIG.log_bot) if sou_admin else "")
 
 
 @app.get("/backlog/imagem/{nome}")
@@ -944,7 +1198,7 @@ async def enviar_planilha(request: Request, alvo: str = Form(""),
             enviado += (" Atenção: não consegui repassar ao bot — "
                         f"{resultado['bot_erro']} Use o botão \"Enviar ao bot\".")
     except Exception as falha:
-        falhou = str(falha) or f"Falha no envio: {type(falha).__name__}"
+        falhou = _erro_para_tela(falha, "receber a planilha")
 
     destino = volta if volta in ("/garantias", "/confirmacao", "/backlog") else "/garantias"
     return RedirectResponse(
@@ -974,7 +1228,7 @@ async def enviar_planilha_ao_bot(request: Request, alvo: str = Form(""),
             enviado = (f"Base enviada ao bot ({resultado['quando']}). "
                        "Ele recarrega na próxima varredura e reavalia os reparos pendentes.")
     except Exception as falha:
-        falhou = str(falha) or f"Falha ao enviar ao bot: {type(falha).__name__}"
+        falhou = _erro_para_tela(falha, "enviar a planilha ao bot")
 
     destino = volta if volta in ("/garantias", "/confirmacao", "/backlog") else "/garantias"
     return RedirectResponse(
@@ -996,7 +1250,9 @@ def dados_garantias(request: Request):
         dados = garantias.calcular(com_autenticador=CONFIG.autenticador_ativo)
     except Exception as falha:
         return HTMLResponse(
-            f'<div class="aviso erro">Falha ao montar a lista: {type(falha).__name__} — {falha}</div>'
+            '<div class="aviso erro">'
+            + _erro_para_tela(falha, "montar a lista de garantias")
+            + '</div>'
         )
     return _render(request, "garantias_dados.html", "garantias", dados=dados)
 
@@ -1025,8 +1281,9 @@ def dados_confirmacao(request: Request, dia: str = "d0"):
         dados = confirmacao.calcular(dia if dia in ("d0", "d1") else "d0")
     except Exception as falha:
         return HTMLResponse(
-            f'<div class="aviso erro">Falha ao montar a confirmação: '
-            f'{type(falha).__name__} — {falha}</div>'
+            '<div class="aviso erro">'
+            + _erro_para_tela(falha, "montar a confirmação de agenda")
+            + '</div>'
         )
     return _render(request, "confirmacao_dados.html", "confirmacao", dados=dados)
 

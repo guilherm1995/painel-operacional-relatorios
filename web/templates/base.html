@@ -6,9 +6,11 @@
   <meta name="robots" content="noindex, nofollow">
   <title>{% block titulo %}{{ titulo_site }}{% endblock %}</title>
   <link rel="icon" href="/static/favicon.png?v={{ versao_estatica }}">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  {# A fonte vinha do CDN do Google. Isso entregava a ele o IP de quem abria
+     cada página -- e obrigava a CSP a liberar um domínio de fora, quando a
+     regra que vale é `default-src 'self'`. Agora o site usa a fonte do próprio
+     sistema de quem acessa: nada sai daqui, e não há binário para versionar.
+     A cadeia de reserva está em estilo.css. #}
   <link rel="stylesheet" href="/static/estilo.css?v={{ versao_estatica }}">
 </head>
 <body>
@@ -33,9 +35,12 @@
       {% if sou_admin %}
       <a href="/usuarios" class="{{ 'ativo' if pagina == 'usuarios' }}">Usuários</a>
       {% endif %}
-      {# sem isto, quem esta logado nao tem como trocar a propria senha: o
-         caminho existe, mas so aparece na tela de quem esta de fora #}
-      <a href="/entrar/primeiro">Minha senha</a>
+      {# "Minha senha" saiu do menu: quem entra por painel.example.com e identificado
+         pelo Cloudflare Access e nao usa senha nenhuma, entao o item so gerava
+         a duvida de para que servia. A ROTA continua de pe -- /entrar/primeiro
+         responde normalmente para quem digitar. E de proposito: ela e a porta
+         de emergencia de quem entra por dentro (SSH pela tailnet), no dia em
+         que a Cloudflare estiver fora do ar. Tirar o link nao tira o caminho. #}
       <a href="/sair" class="sair" title="{{ usuario }}">Sair</a>
     </nav>
   </div>

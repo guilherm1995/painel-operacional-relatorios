@@ -148,19 +148,132 @@ class Portaria:
 PORTARIA = Portaria()
 
 
+# Quem pode falar sobre IP alheio. O site nunca atende a internet direto: na
+# frente dele fica sempre um proxy NOSSO -- o cloudflared, ou o tailscaled do
+# Funnel -- e os dois entregam aqui pelo laco local. Pedido que chega de
+# qualquer outro endereco veio direto, e ai o unico IP confiavel e o do soquete.
+PROXIES_CONFIAVEIS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+
+
 def ip_do_pedido(request) -> str:
     """De onde veio o pedido, para efeito de contagem.
 
-    Sob o Funnel o tailscaled entrega tudo em 127.0.0.1 e poe o IP real em
-    X-Forwarded-For. Esse cabecalho e forjavel, entao ele NAO serve para
-    autorizar nada -- mas para contar tentativas so ajuda: quem forja esta
-    apenas trocando de balde, e o balde de quem nao forja continua certo.
+    A versao anterior lia o PRIMEIRO elemento do X-Forwarded-For, e o comentario
+    dizia que forjar o cabecalho "so troca de balde". Trocar de balde a cada
+    tentativa E o ataque: como a escada de castigo conta por IP, bastava mandar
+    um X-Forwarded-For diferente a cada chute para nunca acumular erro nenhum.
+    A unica defesa contra adivinhacao de senha era contornavel com um cabecalho
+    -- e o codigo esta publicado, explicando o raciocinio para quem quisesse ler.
+
+    Agora nada que venha do cliente e aceito de graca:
+
+      1. Se o par de conexao NAO e um proxy nosso, vale o IP do soquete. Ninguem
+         forja isso: e de onde os pacotes realmente vem.
+      2. Se e, valem so os cabecalhos que o proprio proxy escreve --
+         CF-Connecting-IP, que a borda da Cloudflare SOBRESCREVE em todo pedido,
+         ou o ULTIMO salto do X-Forwarded-For, que e o que o nosso proxy
+         acrescentou. Os elementos da esquerda sao do cliente; o da direita, nao.
+
+    Se o proxy nao mandar nenhum dos dois, todo mundo cai no mesmo balde
+    (127.0.0.1) e um errante sozinho tranca a empresa inteira. Isso e defeito de
+    configuracao, nao operacao normal, entao aqui grita no log em vez de falhar
+    calado.
     """
-    encaminhado = request.headers.get("x-forwarded-for", "")
-    if encaminhado:
-        return encaminhado.split(",")[0].strip()[:45] or "?"
     cliente = getattr(request, "client", None)
-    return getattr(cliente, "host", None) or "?"
+    par = (getattr(cliente, "host", None) or "").strip()
+
+    if par not in PROXIES_CONFIAVEIS:
+        return par[:45] or "?"
+
+    real = (request.headers.get("cf-connecting-ip") or "").strip()
+    if real:
+        return real[:45]
+
+    encaminhado = request.headers.get("x-forwarded-for") or ""
+    if encaminhado:
+        # ultimo salto, nao o primeiro
+        ultimo = encaminhado.split(",")[-1].strip()
+        if ultimo:
+            return ultimo[:45]
+
+    logger.warning(
+        "pedido pelo proxy local sem CF-Connecting-IP nem X-Forwarded-For: "
+        "a contagem de tentativas vai cair toda no mesmo balde"
+    )
+    return par or "?"
+
+
+CABECALHO_ACCESS = "cf-access-authenticated-user-email"
+
+
+def identidade_do_access(request) -> str:
+    """O e-mail que o Cloudflare Access ja provou ser desta pessoa, ou "".
+
+    O Access nao deixa o pedido chegar ate aqui antes de a pessoa provar que a
+    caixa dela recebe: ele manda um codigo para o e-mail e espera o acerto.
+    E a MESMA prova que o segundo fator deste site pede num navegador novo --
+    por isso um dispensa o outro, e isso nao e afrouxar a regra, e reconhecer
+    que ela ja foi cumprida antes, por um caminho que nao depende de nos.
+
+    Tres condicoes, e todas fazem falta:
+
+      1. O par tem que ser o proxy local. Desde que o site passou a escutar so
+         em 127.0.0.1, ninguem de fora fala direto com ele.
+      2. O cabecalho tem que existir. Quem escreve nele e a borda da
+         Cloudflare, que o sobrescreve em todo pedido -- ninguem de fora
+         consegue inventa-lo NAQUELE caminho.
+      3. O Host tem que ser o endereco publico. Esta e a condicao que separa a
+         Cloudflare do Funnel do Tailscale: os dois chegam por 127.0.0.1, mas
+         o Funnel NAO passa pelo Access, e o Host dele e outro.
+
+    De onde vem a forca disto, e onde ela acaba: o Funnel do Tailscale foi
+    desligado em 16/08/2026, entao o unico processo que hoje fala com esta
+    porta e o cloudflared, que so entrega o que ja passou pela borda. Por isso
+    o cabecalho e confiavel -- mesmo argumento do CF-Connecting-IP, e nao por
+    fe no nome dele.
+
+    A condicao 3 e o que sustenta essa conclusao. Se algum dia OUTRO proxy
+    local voltar a servir este site -- um Funnel novo, um nginx de teste, um
+    tunel de alguem -- ela deixa de bastar, porque o Host passa a ser
+    escolhido por quem chega. Nesse dia, ou o proxy sai, ou passa a ser
+    obrigatorio validar a assinatura do `Cf-Access-Jwt-Assertion` contra as
+    chaves publicas da equipe em vez de ler este cabecalho.
+
+    A senha nao foi removida do site: ela e a porta de emergencia. Quem chega
+    por dentro (SSH pela tailnet, tunel ate 127.0.0.1) nao traz identidade do
+    Access e cai na tela normal -- e e isso que impede que um problema na
+    Cloudflare tranque todo mundo do lado de fora.
+    """
+    cliente = getattr(request, "client", None)
+    par = (getattr(cliente, "host", None) or "").strip()
+    if par not in PROXIES_CONFIAVEIS:
+        return ""
+
+    email = (request.headers.get(CABECALHO_ACCESS) or "").strip()
+    esperado = urlsplit(str(CONFIG.endereco_publico or "").strip()).netloc.lower()
+    recebido = (request.headers.get("host") or "").lower()
+
+    if not email:
+        # Falhar calado aqui era o pior defeito possivel: a pessoa passa pelo
+        # Access, o site nao ve a identidade, pede senha de novo, e ninguem
+        # descobre por que. Se o pedido veio pelo endereco publico e mesmo
+        # assim nao ha identidade, alguma coisa esta errada -- e o que resolve
+        # e saber QUAIS cabecalhos a borda mandou. So os nomes, nao o conteudo.
+        if esperado and recebido == esperado:
+            vistos = sorted(k for k in request.headers
+                            if k.lower().startswith("cf-"))
+            logger.warning(
+                "pedido pelo endereco publico sem identidade do Access; "
+                "cabecalhos cf-* recebidos: %s", ", ".join(vistos) or "nenhum")
+        return ""
+
+    if not esperado or recebido != esperado:
+        logger.warning(
+            "identidade do Access com Host inesperado: recebido=%r esperado=%r",
+            recebido, esperado)
+        return ""
+
+    return normalizar_email(email)
 
 
 # ---------------------------------------------------------------------------

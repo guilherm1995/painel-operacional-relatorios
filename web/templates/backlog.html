@@ -23,12 +23,18 @@
 
   <div class="aviso ok" id="tem-novidade" style="display:none">
     O bot gerou imagens novas.
-    <a href="#" onclick="location.reload(); return false;"><strong>Recarregar</strong></a>
+    {# sem onclick: a CSP bloqueia manipulador embutido, e este link estava
+       morto -- clicar nele só pulava para o topo. Ver o script no fim. #}
+    <a href="#" id="recarregar-novidade"><strong>Recarregar</strong></a>
   </div>
 
   {% if not imagens %}
     <div class="aviso alerta">
-      Nenhuma imagem de backlog encontrada em <code>{{ pasta_relatorios }}</code>.
+      {# O caminho no servidor só serve para quem pode ir lá conferir, e entregá-lo
+         no HTML dá a qualquer pessoa logada um mapa da máquina. Mesmo critério do
+         log ao vivo mais abaixo. #}
+      Nenhuma imagem de backlog encontrada{% if sou_admin %} em
+      <code>{{ pasta_relatorios }}</code>{% endif %}.
       Elas aparecem aqui assim que o bot de monitoramento gerar a primeira.
     </div>
   {% endif %}
@@ -139,10 +145,16 @@
   </section>
   {% endfor %}
 
-  <script>
+  <script nonce="{{ nonce }}">
   (function () {
     document.getElementById("recarregar")
             .addEventListener("click", function () { location.reload(); });
+
+    document.getElementById("recarregar-novidade")
+            .addEventListener("click", function (e) {
+              e.preventDefault();
+              location.reload();
+            });
 
     // pede ao bot um backlog novo - só ele consegue gerar, porque a lista de
     // chamados fica na memória do processo dele

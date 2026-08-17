@@ -29,7 +29,12 @@ html { scroll-behavior: smooth; }
 }
 
 body {
-  font-family: "Inter", "Segoe UI", Roboto, Arial, sans-serif;
+  /* A Inter continua primeiro: quem já a tem instalada vê exatamente o mesmo de
+     antes. O que saiu foi o <link> para o CDN do Google -- ver base.html. A
+     cadeia abaixo dá a cada sistema a fonte nativa dele em vez de cair no Arial:
+     Segoe UI no Windows, San Francisco no Mac e no iPhone, Roboto no Android. */
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
   background: var(--fundo);
   color: var(--texto);
   min-height: 100vh;
@@ -758,9 +763,24 @@ section > .nota { padding: 10px 4px 0; }
 
 table.tabela-usuarios td { vertical-align: middle; }
 table.tabela-usuarios tr.revogado td { opacity: .5; }
+/* Sem nowrap: com quatro acoes na mesma linha a tabela transbordava e os
+   botoes da ponta ficavam escondidos atras da rolagem horizontal -- quem
+   administra nao via que existiam. Deixando quebrar, a linha cresce um pouco
+   e tudo fica alcancavel sem arrastar nada. */
+table.tabela-usuarios { width: 100%; }
 table.tabela-usuarios td.acoes,
-table.tabela-usuarios th.acoes { text-align: right; white-space: nowrap; }
-table.tabela-usuarios td.acoes form { display: inline-block; margin-left: 6px; }
+table.tabela-usuarios th.acoes { text-align: right; }
+/* A largura declarada e o que faz a coluna quebrar. Sem ela, tabela de
+   layout automatico so cresce para caber o conteudo, e tirar o nowrap nao
+   muda nada -- foi o que aconteceu na primeira tentativa. */
+table.tabela-usuarios th.acoes { width: 34%; }
+/* O que de fato faz os botoes quebrarem: um contentor flexivel dentro da
+   celula. Declarar largura na coluna sozinha nao bastou -- tabela de layout
+   automatico cresce para caber o conteudo e a largura vira sugestao. */
+table.tabela-usuarios td.acoes .acoes-caixa {
+  display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end;
+}
+table.tabela-usuarios td.acoes form { display: inline-block; margin: 0; }
 table.tabela-usuarios small.por { color: var(--texto-fraco); margin-left: 4px; }
 
 .etiqueta {

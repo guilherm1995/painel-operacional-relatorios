@@ -13,9 +13,9 @@ endereco fixo configurado; e o modo antigo, de tunel efemero.
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -37,6 +37,32 @@ from web.config import CONFIG  # noqa: E402
 
 LINHA = "=" * 64
 
+
+def ligar_a_trilha() -> None:
+    """Faz os registros do site aparecerem no journal.
+
+    O uvicorn sobe com log_level="warning", e isso engolia TODO porteiro.info:
+    quem entrou, por qual caminho, dispositivo novo, revogacao. O sistema
+    rodava sem trilha de acesso nenhuma -- e foi essa cegueira que fez a
+    identidade do Cloudflare Access ser descartada em silencio por horas, sem
+    uma linha sequer dizendo o que estava acontecendo.
+
+    Subir o nivel do uvicorn inteiro resolveria e traria junto uma linha por
+    requisicao, afogando justamente o que interessa. Entao a familia "operacional"
+    ganha o proprio destino, com propagate=False para nao depender de como o
+    uvicorn configurou a raiz -- e para nao ser desligada quando ele mudar de
+    ideia numa versao futura.
+    """
+    saida = logging.StreamHandler(sys.stdout)
+    saida.setFormatter(logging.Formatter(
+        "%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"))
+    nosso = logging.getLogger("operacional")
+    nosso.setLevel(logging.INFO)
+    nosso.handlers.clear()
+    nosso.addHandler(saida)
+    nosso.propagate = False
+
 # O site publica aqui onde ele esta. O bot de monitoramento le este arquivo
 # para responder o comando /painel no grupo - assim o endereco publico mudar a
 # cada reinicio deixa de ser problema. Nao ha mais PIN a publicar: quem entra
@@ -44,17 +70,20 @@ LINHA = "=" * 64
 ARQUIVO_ENDERECO = "painel_endereco.json"
 
 
-def publicar_endereco(porta: int, publico: str = "") -> None:
+def publicar_endereco(publico: str = "") -> None:
     """Grava o endereco atual do site na pasta de dados do bot."""
     import json
 
     destino = CONFIG.pasta_bot / "dados"
     if not destino.exists():
         return
+    # Um endereco so, e cifrado. O site escuta apenas em 127.0.0.1: "localhost"
+    # e o IP da rede nao respondem mais a ninguem fora desta maquina, entao
+    # anuncia-los seria mandar a equipe a uma porta fechada. E, enquanto
+    # respondiam, respondiam em texto claro, por fora do tunel -- ou seja, por
+    # fora do certificado, da conferencia de origem e do registro de acesso.
     conteudo = {
         "atualizado_em": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "local": f"http://localhost:{porta}",
-        "rede_local": f"http://{ip_local()}:{porta}",
         "publico": publico,
     }
     try:
@@ -65,14 +94,9 @@ def publicar_endereco(porta: int, publico: str = "") -> None:
         print(f"  [aviso] não consegui publicar o endereço para o bot: {erro}")
 
 
-def ip_local() -> str:
-    """IP da maquina na rede, para acessar do celular no mesmo Wi-Fi."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
+# ip_local() vivia aqui: descobria o IP da maquina na rede para anunciar o site
+# ao celular no mesmo Wi-Fi. Saiu junto com o bind em 0.0.0.0 -- sem ninguem
+# escutando naquele endereco, a funcao so sabia responder um caminho morto.
 
 
 def achar_cloudflared() -> str | None:
@@ -127,7 +151,7 @@ def subir_tunel(porta: int, executavel: str) -> None:
             novo = achado.group(0)
             trocou = bool(atual)
             atual = novo
-            publicar_endereco(porta, novo)
+            publicar_endereco(novo)
             print()
             print(LINHA)
             if trocou:
@@ -140,7 +164,7 @@ def subir_tunel(porta: int, executavel: str) -> None:
 
         processo.wait()
         atual = ""
-        publicar_endereco(porta, "")   # nao entregar link morto pelo /painel
+        publicar_endereco("")   # nao entregar link morto pelo /painel
         print(
             f"  [tunel] cloudflared encerrou (codigo {processo.returncode}); "
             "subindo de novo em 10s",
@@ -157,11 +181,12 @@ def main() -> int:
 
     import uvicorn
 
+    ligar_a_trilha()
+
     print(LINHA)
     print(f"  {CONFIG.titulo}")
     print(LINHA)
-    print(f"  Neste notebook : http://localhost:{args.porta}")
-    print(f"  Na rede local  : http://{ip_local()}:{args.porta}")
+    print(f"  Escutando em   : 127.0.0.1:{args.porta} (so quem esta nesta maquina)")
     print("  Acesso         : e-mail e senha, ou conta Google")
 
     for problema in CONFIG.problemas():
@@ -190,9 +215,27 @@ def main() -> int:
 
     # Com endereco fixo, o /painel ja recebe o valor definitivo aqui. Sem ele,
     # publica o que se sabe e o tunel atualiza quando a URL sair.
-    publicar_endereco(args.porta, fixo)
+    publicar_endereco(fixo)
 
-    uvicorn.run("web.app:app", host="0.0.0.0", port=args.porta, log_level="warning")
+    # 127.0.0.1 e nao 0.0.0.0: quem fala com o site e o cloudflared, na mesma
+    # maquina. Escutando em todas as interfaces, qualquer micro da rede da
+    # empresa alcancava http://<ip>:8800 em texto claro e contornava a borda
+    # inteira -- certificado, conferencia de origem, e o Access.
+    #
+    # proxy_headers=False, e este e o ponto sutil: por padrao o uvicorn
+    # REESCREVE request.client.host com o que vem no X-Forwarded-For. O IP
+    # resultante ate era o certo, mas o efeito colateral era grave -- o codigo
+    # deste site pergunta "o par e o proxy local?" para decidir em quem
+    # confiar, e essa pergunta passava a responder "nao" para TODO pedido
+    # vindo da Cloudflare. Foi o que fez a identidade do Access ser ignorada
+    # em silencio, e o que impedia acesso.ip_do_pedido() de sequer consultar o
+    # CF-Connecting-IP que ele foi escrito para preferir.
+    #
+    # Com False, client.host volta a ser o par de verdade (127.0.0.1) e cada
+    # decisao passa a ser tomada por quem tem contexto para toma-la, em vez de
+    # por um middleware generico que nao sabe qual cabecalho e confiavel aqui.
+    uvicorn.run("web.app:app", host="127.0.0.1", port=args.porta,
+                log_level="warning", proxy_headers=False)
     return 0
 
 

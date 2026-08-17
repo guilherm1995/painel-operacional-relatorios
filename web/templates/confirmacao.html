@@ -26,7 +26,7 @@
   </div>
 </main>
 
-<script>
+<script nonce="{{ nonce }}">
 (function () {
   var alvo = document.getElementById("conteudo");
   fetch("/confirmacao/dados?dia={{ dia }}")

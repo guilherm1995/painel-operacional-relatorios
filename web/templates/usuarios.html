@@ -15,6 +15,7 @@
     <h2>Cadastrar usuário</h2>
     <div class="tabela-caixa">
       <form method="post" action="/usuarios/novo" class="forma-usuario">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="email" name="email" placeholder="E-mail" class="campo-texto" required>
         <input type="text" name="nome" placeholder="Nome (opcional)" class="campo-texto">
         <select name="papel" class="campo-texto">
@@ -23,10 +24,18 @@
         </select>
         <button class="botao" type="submit">Cadastrar</button>
       </form>
+      <p class="nota alerta">
+        <strong>Cadastrar aqui não concede acesso sozinho.</strong> Quem manda na
+        porta de entrada é o Cloudflare Access: o e-mail precisa estar
+        <em>também</em> na política <code>Equipe OPERACIONAL</code>, no painel da
+        Cloudflare. Sem isso a pessoa nem chega nesta tela — ela é barrada antes,
+        e sem entender por quê. São duas listas, e as duas precisam ter o nome.
+      </p>
       <p class="nota">
-        Não é necessário atribuir senha ao usuário. O acesso é realizado pela
-        conta Google ou pelo primeiro acesso, no qual o próprio usuário define
-        sua senha.
+        Senha não é mais necessária: quem entra pelo endereço público é
+        identificado pelo Access, que já confirmou a caixa de e-mail dela antes
+        do pedido chegar aqui. O cadastro desta tela decide <strong>quem pode</strong>
+        e <strong>com que perfil</strong> — não como a pessoa prova quem é.
       </p>
     </div>
   </section>
@@ -58,13 +67,15 @@
                 {{ 'Administrador' if p.papel == 'admin' else 'Padrão' }}
               </span>
             </td>
+            {# So ativo/revogado. "Senha pendente" vivia aqui e virou mentira
+               quando o Access passou a identificar as pessoas: quem nunca
+               definiu senha entra do mesmo jeito, entao anunciar pendencia
+               mandava o administrador atras de um problema que nao existe. #}
             <td>
-              {% if not p.ativo %}
-                <span class="etiqueta perigo">Revogado</span>
-              {% elif p.tem_senha %}
+              {% if p.ativo %}
                 <span class="etiqueta ok">Ativo</span>
               {% else %}
-                <span class="etiqueta espera">Senha pendente</span>
+                <span class="etiqueta perigo">Revogado</span>
               {% endif %}
             </td>
             <td>
@@ -72,15 +83,21 @@
               {% if p.entrou_por %}<small class="por">({{ p.entrou_por }})</small>{% endif %}
             </td>
             <td class="acoes">
+              {# Caixa flexivel: sem ela os botoes ficam numa linha so, a
+                 celula cresce para caber, e a tabela transborda escondendo as
+                 acoes da ponta atras da rolagem. #}
+              <div class="acoes-caixa">
               {% if p.email != eu %}
                 {% if p.ativo %}
                 <form method="post" action="/usuarios/ativo">
+                  <input type="hidden" name="csrf" value="{{ csrf }}">
                   <input type="hidden" name="email" value="{{ p.email }}">
                   <input type="hidden" name="ativo" value="0">
                   <button type="submit" class="mini perigo">Revogar</button>
                 </form>
                 {% else %}
                 <form method="post" action="/usuarios/ativo">
+                  <input type="hidden" name="csrf" value="{{ csrf }}">
                   <input type="hidden" name="email" value="{{ p.email }}">
                   <input type="hidden" name="ativo" value="1">
                   <button type="submit" class="mini">Reativar</button>
@@ -88,29 +105,40 @@
                 {% endif %}
 
                 <form method="post" action="/usuarios/papel">
+                  <input type="hidden" name="csrf" value="{{ csrf }}">
                   <input type="hidden" name="email" value="{{ p.email }}">
                   <input type="hidden" name="papel"
                          value="{{ 'padrao' if p.papel == 'admin' else 'admin' }}">
                   <button type="submit" class="mini">
-                    {{ 'Remover administração' if p.papel == 'admin' else 'Conceder administração' }}
+                    {{ 'Remover admin' if p.papel == 'admin' else 'Tornar admin' }}
                   </button>
                 </form>
               {% endif %}
 
+              {# "Redefinir senha" dizia o contrário do que o botão faz: ele não
+                 define senha nenhuma, ele APAGA a que existe. Com o login pela
+                 Cloudflare, a senha virou porta de emergência -- e apagar a de
+                 alguém é justamente o que se faz quando há suspeita de que ela
+                 vazou. O botão só aparece para quem tem senha guardada, então
+                 ele some sozinho conforme a equipe deixa de usá-la. #}
               {% if p.tem_senha %}
-              <form method="post" action="/usuarios/senha">
+              <form method="post" action="/usuarios/senha"
+                    data-confirmar="Apagar a senha de {{ p.email }}? A pessoa terá de passar pelo primeiro acesso de novo.">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
                 <input type="hidden" name="email" value="{{ p.email }}">
-                <button type="submit" class="mini">Redefinir senha</button>
+                <button type="submit" class="mini perigo">Apagar senha</button>
               </form>
               {% endif %}
 
               {% if p.email != eu %}
               <form method="post" action="/usuarios/apagar"
-                    onsubmit="return confirm('Confirma a exclusão de {{ p.email }} do cadastro?')">
+                    data-confirmar="Confirma a exclusão de {{ p.email }} do cadastro?">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
                 <input type="hidden" name="email" value="{{ p.email }}">
                 <button type="submit" class="mini perigo">Excluir</button>
               </form>
               {% endif %}
+              </div>
             </td>
           </tr>
           {% else %}
@@ -124,5 +152,23 @@
       requisição seguinte, sem aguardar o vencimento do prazo.
     </p>
   </section>
+
+{# A confirmação vivia em `onsubmit="return confirm(...)"`, e a CSP bloqueia
+   manipulador embutido -- nonce não vale para atributo `on*`, só para <script>.
+   O navegador recusava o manipulador E ENVIAVA O FORMULÁRIO ASSIM MESMO: um
+   clique torto em "Excluir" apagava a conta sem perguntar nada. Aqui o mesmo
+   diálogo é ligado por addEventListener, de dentro de um <script> com nonce. #}
+<script nonce="{{ nonce }}">
+(function () {
+  var formularios = document.querySelectorAll("form[data-confirmar]");
+  Array.prototype.forEach.call(formularios, function (f) {
+    f.addEventListener("submit", function (evento) {
+      if (!window.confirm(f.getAttribute("data-confirmar"))) {
+        evento.preventDefault();
+      }
+    });
+  });
+})();
+</script>
 </main>
 {% endblock %}

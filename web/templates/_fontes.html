@@ -60,7 +60,7 @@
   </div>
 </section>
 
-<script>
+<script nonce="{{ nonce }}">
 (function () {
   document.querySelectorAll(".fonte [data-abre]").forEach(function (b) {
     b.addEventListener("click", function () { document.getElementById(b.dataset.abre).click(); });
