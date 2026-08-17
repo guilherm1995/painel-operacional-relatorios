@@ -271,13 +271,41 @@ css = (WEB / "static" / "estilo.css").read_text(encoding="utf-8")
 # que pede a Inter -- sem CDN, a Inter so existe em quem ja a tem instalada, e
 # quem nao tem cai no proximo nome da lista. Se esse proximo nome nao for uma
 # fonte de sistema, o site sai com a fonte padrao do navegador.
-cadeia = re.search(r"font-family:\s*([^;}]*Inter[^;}]*)", css, re.S)
+# O @font-face sai da busca antes de tudo: ele TAMBEM tem 'font-family: "Inter"'
+# -- e ali o nome e a declaracao da fonte, nao uma cadeia de alternativas. Sem
+# tirar o bloco, a busca casa com ele primeiro e o ensaio acusa "nenhuma
+# alternativa" numa cadeia que esta perfeita, logo abaixo.
+sem_face = re.sub(r"@font-face\s*\{[^}]*\}", "", css, flags=re.S)
+cadeia = re.search(r"font-family:\s*([^;}]*Inter[^;}]*)", sem_face, re.S)
 seguintes = [n.strip().strip('"\'')
              for n in (cadeia.group(1).split(",")[1:] if cadeia else [])]
 diz(bool(cadeia) and any(n in seguintes for n in
                          ("system-ui", "-apple-system", "sans-serif")),
     "quem nao tem a Inter cai numa fonte de sistema",
     f"  ({', '.join(seguintes[:3]) or 'nenhuma alternativa'})")
+
+# A Inter agora e servida por nos. Uma @font-face apontando para arquivo que
+# nao existe nao da erro nenhum: o navegador cai calado na proxima fonte da
+# cadeia, e a unica pista e o texto sair com outra cara. Entao o ensaio segue
+# o caminho ate o disco.
+face = re.search(r'@font-face\s*\{[^}]*?url\(\s*["\']?([^"\')]+)', css, re.S)
+arquivo = WEB / "static" / (face.group(1).rsplit("/", 1)[-1] if face else "")
+diz(bool(face) and arquivo.is_file(), "a @font-face aponta para um arquivo que existe",
+    f"  ({arquivo.name}, {arquivo.stat().st_size // 1024} KB)" if face and arquivo.is_file()
+    else f"  (procurei {arquivo})")
+
+# Peso variavel: um arquivo so cobrindo 100-900. Sem esta linha, o navegador
+# usaria a Inter regular e SINTETIZARIA o negrito -- fica gordo e borrado, e
+# como funciona, ninguem descobre pelo log.
+faixa = re.search(r"@font-face\s*\{[^}]*font-weight:\s*(\d+)\s+(\d+)", css, re.S)
+usados = sorted({int(p) for p in re.findall(r"font-weight:\s*(\d{3})\s*;", css)})
+cobre = bool(faixa) and all(int(faixa.group(1)) <= p <= int(faixa.group(2))
+                            for p in usados)
+diz(cobre, "a faixa de peso da fonte cobre todos os pesos que o CSS pede",
+    f"  (fonte {faixa.group(1)}-{faixa.group(2)} · usados {usados})" if faixa
+    else f"  (sem faixa declarada · usados {usados})")
+
+diz("font-display" in css, "font-display declarado (texto nao some enquanto a fonte chega)")
 
 
 print("\n5. Caminho de servidor so para administrador")

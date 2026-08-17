@@ -1,3 +1,26 @@
+/* A Inter, servida por nos. Antes vinha do CDN do Google, o que obrigava a CSP
+   a abrir fonts.googleapis.com e fonts.gstatic.com e contava a eles cada visita
+   ao painel. Tirar o <link> devolveu a privacidade e fechou a politica, mas
+   deixou a fonte a merce de quem ja a tivesse instalada -- na pratica, quase
+   ninguem: no Windows a cadeia caia em Segoe UI.
+
+   Um arquivo so, e de proposito: e a Inter VARIAVEL, com o eixo de peso
+   inteiro (100 a 900) em 47 KB. Os pesos usados aqui sao 400, 600, 700 e 800;
+   em arquivos separados seriam quatro downloads. A CSP ja diz font-src 'self',
+   entao servir de /static nao pediu mudanca nenhuma na politica.
+
+   font-display: swap -- o texto aparece na hora com a fonte de sistema e troca
+   quando a Inter chega. O padrao ('auto', que a maioria trata como 'block')
+   deixaria a tela em branco por ate 3s numa rede ruim: pior num painel de
+   operacao, que existe para ser lido de relance. */
+@font-face {
+  font-family: "Inter";
+  src: url("/static/inter.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Identidade OPERACIONAL - grafite neutro, plano, com indigo como unico acento
    (linha Linear/Vercel). Sem gradiente, sem sombra - so contraste de
    superficie e um acento confiante usado com moderacao. */
