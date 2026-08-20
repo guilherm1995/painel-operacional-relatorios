@@ -152,8 +152,10 @@ class Config:
                 "tem senha definida. Se ninguém tiver, o site fica inacessível."
             )
 
+        # 'chamados_abertos_field_service.xlsx' saiu desta lista em 20/08/2026,
+        # junto com o cálculo próprio da garantia: hoje a lista vem pronta do
+        # bot. Cobrar um arquivo que ninguém lê treina a equipe a ignorar avisos.
         for arquivo, para_que in [
-            ("chamados_abertos_field_service.xlsx", "os chamados em aberto"),
             ("base OFS ok.xlsx", "o histórico de serviços concluídos"),
         ]:
             if self.localizar_dado(arquivo) is None:
@@ -163,14 +165,21 @@ class Config:
                     + " · ".join(str(p) for p in self.pastas_de_dados())
                 )
 
+        if not (self.dados_bot / "garantias_lista.json").is_file():
+            avisos.append(
+                "O bot ainda não publicou 'garantias_lista.json' — a tela de "
+                "garantias fica vazia até a próxima montagem da lista (de hora "
+                f"em hora). Procurei em: {self.dados_bot}"
+            )
+
         # Aviso à parte, e mais brando: sem esta base o site continua inteiro
         # e a garantia também. O que para é o alerta de reincidência do bot --
         # e ele para EM SILÊNCIO, que é justamente o motivo de o aviso existir.
-        if self.localizar_dado("base improdutivas 30 dias.xlsx") is None:
+        if self.localizar_dado("base improdutivas 60 dias.xlsx") is None:
             avisos.append(
-                "Não encontrei 'base improdutivas 30 dias.xlsx' — o bot não vai "
+                "Não encontrei 'base improdutivas 60 dias.xlsx' — o bot não vai "
                 "avisar quando um entrante já tiver sido improdutiva nos "
-                "últimos 30 dias. "
+                "últimos 60 dias. "
                 "Envie pela página Garantias (exportação do OFS dos últimos 30 "
                 "dias, SEM o filtro de status concluído)."
             )

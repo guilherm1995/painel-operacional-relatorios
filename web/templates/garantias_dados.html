@@ -67,7 +67,7 @@
                   <th>Aging</th>
                   <th>Serviço</th>
                   <th>Técnico (OFS)</th>
-                  <th>Endereço</th>
+                  <th>Bairro</th>
                 </tr>
               </thead>
               <tbody>
@@ -84,7 +84,7 @@
                   <td>{{ item.aging }}d</td>
                   <td>{{ item.servico }}</td>
                   <td>{{ item.tecnico }}</td>
-                  <td class="livre">{{ item.endereco }}</td>
+                  <td class="livre">{{ item.bairro }}</td>
                 </tr>
                 {% endfor %}
               </tbody>
@@ -104,7 +104,7 @@
               <div class="cartao-garantia-linha"><span>Serviço</span><span>{{ item.servico }}</span></div>
               <div class="cartao-garantia-linha"><span>Aging</span><span>{{ item.aging }}d</span></div>
               <div class="cartao-garantia-linha"><span>Técnico (OFS)</span><span>{{ item.tecnico }}</span></div>
-              <div class="cartao-garantia-endereco">{{ item.endereco }}</div>
+              <div class="cartao-garantia-endereco">{{ item.bairro }}</div>
             </div>
             {% endfor %}
           </div>
@@ -131,7 +131,7 @@
           <col>
         </colgroup>
         <thead>
-          <tr><th>Contrato</th><th>Unidade</th><th>Aging</th><th>Serviço</th><th>Técnico (OFS)</th><th>Endereço</th></tr>
+          <tr><th>Contrato</th><th>Unidade</th><th>Aging</th><th>Serviço</th><th>Técnico (OFS)</th><th>Bairro</th></tr>
         </thead>
         <tbody>
           {% for item in dados.invalidos %}
@@ -141,7 +141,7 @@
             <td>{{ item.aging }}d</td>
             <td>{{ item.servico }}</td>
             <td>{{ item.tecnico }}</td>
-            <td class="livre">{{ item.endereco }}</td>
+            <td class="livre">{{ item.bairro }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -157,7 +157,7 @@
         <div class="cartao-garantia-linha"><span>Serviço</span><span>{{ item.servico }}</span></div>
         <div class="cartao-garantia-linha"><span>Aging</span><span>{{ item.aging }}d</span></div>
         <div class="cartao-garantia-linha"><span>Técnico (OFS)</span><span>{{ item.tecnico }}</span></div>
-        <div class="cartao-garantia-endereco">{{ item.endereco }}</div>
+        <div class="cartao-garantia-endereco">{{ item.bairro }}</div>
       </div>
       {% endfor %}
     </div>

@@ -21,12 +21,12 @@ from ..config import CONFIG
 # nome do arquivo -> o que é, quem usa e como conferir se veio o certo.
 # Em "colunas", um item que é lista significa "qualquer um destes serve".
 ARQUIVOS: dict[str, dict] = {
-    "chamados_abertos_field_service.xlsx": {
-        "rotulo": "Chamados abertos",
-        "descricao": "os reparos em aberto, exportados do Field Service",
-        "paginas": ["garantias"],
-        "colunas": ["CÓDIGO CONTRATO", "FILA", "DATA DE INGRESSO"],
-    },
+    # "chamados_abertos_field_service.xlsx" saiu em 20/08/2026. Ele existia
+    # para o site montar a PRÓPRIA lista de garantias, em paralelo à do bot --
+    # duas contas para a mesma pergunta, com resultados diferentes na tela e no
+    # grupo. Hoje a lista vem pronta do bot (ver fontes/garantias.py) e este
+    # arquivo não alimenta mais nada: pedir um upload que ninguém lê é convidar
+    # alguém a manter uma exportação inútil todo dia.
     "base OFS ok.xlsx": {
         "rotulo": "Base OFS",
         "descricao": "o histórico de serviços concluídos",
@@ -35,14 +35,14 @@ ARQUIVOS: dict[str, dict] = {
                     ["Status da Atividade"],
                     ["Tipo de Atividade.1", "Tipo de Atividade 2", "Tipo de Atividade"]],
     },
-    "base improdutivas 30 dias.xlsx": {
-        "rotulo": "Improdutivas (30 dias)",
+    "base improdutivas 60 dias.xlsx": {
+        "rotulo": "Improdutivas (60 dias)",
         # Arquivo SEPARADO da Base OFS de propósito: aquela é a exportação só
         # de atividades concluídas, e é dela que sai a garantia. Esta aqui é a
         # mesma exportação SEM o filtro de status -- é o único jeito de as
         # improdutivas aparecerem. Misturar as duas seria mexer numa base
         # crítica que já funciona para ganhar um arquivo a menos.
-        "descricao": "os últimos 30 dias COM as improdutivas (exportar sem o filtro de status)",
+        "descricao": "os últimos 60 dias COM as improdutivas (exportar sem o filtro de status)",
         "paginas": ["garantias"],
         "colunas": [["Motivo de Encerramento das atividades"], ["Data"],
                     ["Número do contrato", "Contrato"], ["Nome"]],
@@ -67,7 +67,7 @@ ARQUIVOS: dict[str, dict] = {
 # porém, grava os envios em <site>/dados. Sem copiar para lá, atualizar a base
 # pelo site só arrumava a tela: o bot continuava avaliando pela base velha e
 # nenhuma reavaliação acontecia.
-ESPELHADOS_NO_BOT = {"base OFS ok.xlsx", "base improdutivas 30 dias.xlsx"}
+ESPELHADOS_NO_BOT = {"base OFS ok.xlsx", "base improdutivas 60 dias.xlsx"}
 
 # Quantas vezes insistir na troca do arquivo do bot. Ele abre a planilha a cada
 # varredura e a leitura leva alguns segundos; cair bem nessa janela dá
